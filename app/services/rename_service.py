@@ -22,21 +22,31 @@ class RenameService:
         return backup_dir
 
     def preview_targets(self, results: Iterable[MatchResult]) -> List[MatchResult]:
-        updated: List[MatchResult] = []
-        reserved = set()
+        updated = list(results)
+        grouped: dict[tuple[Path, str], List[MatchResult]] = {}
 
-        for item in results:
+        for item in updated:
             final_name = item.effective_final_name()
             if not final_name:
                 item.status = "SIN_DESTINO"
                 item.reason = (item.reason + " | ").strip(" | ") + "No tiene nombre final"
-                updated.append(item)
                 continue
 
-            target = self._build_unique_target(item.original_path.parent, final_name, reserved)
-            item.target_path = target
-            reserved.add(str(target).upper())
-            updated.append(item)
+            key = (item.original_path.parent, final_name.upper())
+            grouped.setdefault(key, []).append(item)
+
+        reserved: set[str] = set()
+        for (folder, _final_name_upper), items in grouped.items():
+            final_name = items[0].effective_final_name()
+            if len(items) == 1:
+                item = items[0]
+                item.target_path = self._build_available_target(folder, final_name, reserved)
+                reserved.add(str(item.target_path).upper())
+                continue
+
+            for index, item in enumerate(items, start=1):
+                item.target_path = self._build_numbered_target(folder, final_name, index, reserved)
+                reserved.add(str(item.target_path).upper())
 
         return updated
 
@@ -96,7 +106,7 @@ class RenameService:
         return csv_path, json_path
 
     @staticmethod
-    def _build_unique_target(folder: Path, final_name: str, reserved: set[str]) -> Path:
+    def _build_available_target(folder: Path, final_name: str, reserved: set[str]) -> Path:
         target = folder / final_name
         if not target.exists() and str(target).upper() not in reserved:
             return target
@@ -105,7 +115,19 @@ class RenameService:
         suffix = target.suffix
         idx = 1
         while True:
-            candidate = folder / f"{stem}_DUP_{idx}{suffix}"
+            candidate = folder / f"{stem}_{idx}{suffix}"
+            if not candidate.exists() and str(candidate).upper() not in reserved:
+                return candidate
+            idx += 1
+
+    @staticmethod
+    def _build_numbered_target(folder: Path, final_name: str, index: int, reserved: set[str]) -> Path:
+        target = folder / final_name
+        stem = target.stem
+        suffix = target.suffix
+        idx = index
+        while True:
+            candidate = folder / f"{stem}_{idx}{suffix}"
             if not candidate.exists() and str(candidate).upper() not in reserved:
                 return candidate
             idx += 1

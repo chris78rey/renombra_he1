@@ -35,6 +35,12 @@
   "ui": {
     "base_font_size": 13
   },
+  "credits": {
+    "version": "1.0",
+    "author": "Equipo de implementacion",
+    "organization": "",
+    "description": "Herramienta para analizar, auditar y renombrar PDFs hospitalarios."
+  },
   "output": {
     "audit_csv_name": "auditoria_renombrado.csv",
     "report_json_name": "auditoria_renombrado.json"

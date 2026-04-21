@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import List
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -33,6 +34,31 @@ from app.services.pdf_service import PdfScanner
 from app.services.rename_service import RenameService
 from app.services.rules_service import RuleEngine
 from app.services.sqlite_rule_service import SQLiteRuleRepository
+
+
+class AnalyzeWorker(QObject):
+    finished = pyqtSignal(list)
+    failed = pyqtSignal(str)
+    progress = pyqtSignal(str)
+
+    def __init__(self, config: dict, folder: str, rules: List[ValidNameRule]):
+        super().__init__()
+        self.config = config
+        self.folder = folder
+        self.rules = rules
+
+    def run(self):
+        try:
+            self.progress.emit("Leyendo PDFs...")
+            scanner = PdfScanner(self.config)
+            candidates = scanner.scan_folder(self.folder)
+
+            self.progress.emit(f"Aplicando reglas a {len(candidates)} PDF(s)...")
+            engine = RuleEngine(self.config)
+            results = [engine.match(item, self.rules) for item in candidates]
+            self.finished.emit(results)
+        except Exception as exc:
+            self.failed.emit(str(exc))
 
 
 class CatalogDialog(QDialog):
@@ -83,6 +109,192 @@ class CatalogDialog(QDialog):
         layout.addWidget(btn_close)
 
 
+class EditableCatalogDialog(QDialog):
+    HEADERS = [
+        "Si el nombre contiene",
+        "Renombrar como",
+        "Si el texto del PDF contiene",
+        "Regex en texto",
+        "Activo",
+        "Prioridad",
+        "Nota",
+        "Tipo",
+    ]
+    FIELDS = ["palabras_nombre", "nombre_pdf", "palabras_texto", "regex_texto", "activo", "orden", "nota", "es_base"]
+
+    def __init__(self, rows: list[dict], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Editar reglas de cambio de nombre")
+        self.resize(1100, 700)
+        self.saved = False
+
+        layout = QVBoxLayout(self)
+
+        title = QLabel("Reglas de cambio de nombre")
+        title.setObjectName("titleLabel")
+        layout.addWidget(title)
+
+        help_label = QLabel(
+            "Ejemplo: si un archivo se llama F_otros.pdf y quiere cambiarlo a xyz.pdf, "
+            "escriba OTROS en 'Si el nombre contiene' y xyz.pdf en 'Renombrar como'. "
+            "Puede separar varias palabras con | o ;. Las filas Base no se eliminan; agregue filas nuevas para reglas propias."
+        )
+        help_label.setWordWrap(True)
+        layout.addWidget(help_label)
+
+        self.table = QTableWidget(len(rows), len(self.HEADERS))
+        self.table.setHorizontalHeaderLabels(self.HEADERS)
+        self.table.setEditTriggers(
+            QAbstractItemView.EditTrigger.DoubleClicked
+            | QAbstractItemView.EditTrigger.EditKeyPressed
+            | QAbstractItemView.EditTrigger.AnyKeyPressed
+        )
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.table.setAlternatingRowColors(True)
+
+        for row_index, row in enumerate(rows):
+            self._set_row(row_index, row)
+
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(7, QHeaderView.ResizeMode.ResizeToContents)
+
+        layout.addWidget(self.table, stretch=1)
+
+        button_row = QHBoxLayout()
+        btn_add = QPushButton("Agregar regla")
+        btn_add.clicked.connect(self.add_row)
+        btn_delete = QPushButton("Eliminar seleccionadas")
+        btn_delete.clicked.connect(self.delete_selected_rows)
+        btn_save = QPushButton("Guardar cambios")
+        btn_save.clicked.connect(self.save)
+        btn_close = QPushButton("Cerrar")
+        btn_close.clicked.connect(self.reject)
+
+        for button in (btn_add, btn_delete, btn_save, btn_close):
+            button.setMinimumHeight(48)
+            button_row.addWidget(button)
+        layout.addLayout(button_row)
+
+    def _set_row(self, row_index: int, row: dict):
+        for col_index, field in enumerate(self.FIELDS):
+            value = str(row.get(field, ""))
+            if field == "es_base":
+                value = "Base" if value.strip().upper() == "S" else "Personalizada"
+            item = QTableWidgetItem(value)
+            if field == "es_base":
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.table.setItem(row_index, col_index, item)
+
+    def add_row(self):
+        row_index = self.table.rowCount()
+        self.table.insertRow(row_index)
+        self._set_row(
+            row_index,
+            {
+                "nombre_pdf": "NUEVO.pdf",
+                "activo": "S",
+                "orden": "9999",
+                "nota": "",
+                "palabras_nombre": "",
+                "palabras_texto": "",
+                "regex_texto": "",
+                "es_base": "N",
+            },
+        )
+        self.table.selectRow(row_index)
+
+    def delete_selected_rows(self):
+        selected_rows = sorted({idx.row() for idx in self.table.selectionModel().selectedRows()}, reverse=True)
+        if not selected_rows:
+            QMessageBox.warning(self, "Sin seleccion", "Seleccione una o mas reglas para eliminar")
+            return
+        base_rows = [row for row in selected_rows if self._is_base_row(row)]
+        if base_rows:
+            QMessageBox.warning(
+                self,
+                "Reglas base protegidas",
+                "No se pueden eliminar las reglas base. Seleccione solo reglas personalizadas para borrar.",
+            )
+            return
+        confirm = QMessageBox.question(
+            self,
+            "Eliminar reglas",
+            f"Se eliminaran {len(selected_rows)} regla(s). Desea continuar?",
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        for row in selected_rows:
+            self.table.removeRow(row)
+
+    def _is_base_row(self, row_index: int) -> bool:
+        item = self.table.item(row_index, self.FIELDS.index("es_base"))
+        return bool(item and item.text().strip().lower() == "base")
+
+    def rows(self) -> list[dict]:
+        data = []
+        for row_index in range(self.table.rowCount()):
+            row = {}
+            for col_index, field in enumerate(self.FIELDS):
+                item = self.table.item(row_index, col_index)
+                value = item.text().strip() if item else ""
+                if field == "es_base":
+                    value = "S" if value.lower() == "base" else "N"
+                row[field] = value
+            data.append(row)
+        return data
+
+    def save(self):
+        self.saved = True
+        self.accept()
+
+
+class CreditsDialog(QDialog):
+    def __init__(self, config: dict, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Creditos")
+        self.resize(620, 360)
+
+        credits = config.get("credits", {})
+        app_name = config.get("app_name", "Renombrador PDF")
+        version = credits.get("version", "1.0")
+        author = credits.get("author", "Equipo de implementacion")
+        organization = credits.get("organization", "")
+        description = credits.get("description", "Herramienta para analizar, auditar y renombrar PDFs hospitalarios.")
+
+        layout = QVBoxLayout(self)
+        title = QLabel(app_name)
+        title.setObjectName("titleLabel")
+        layout.addWidget(title)
+
+        body = QTextEdit()
+        body.setReadOnly(True)
+        body.setText(
+            "\n".join(
+                [
+                    f"Version: {version}",
+                    f"Creditos: {author}",
+                    f"Organizacion: {organization}" if organization else "",
+                    "",
+                    description,
+                ]
+            ).strip()
+        )
+        layout.addWidget(body, stretch=1)
+
+        btn_close = QPushButton("Cerrar")
+        btn_close.clicked.connect(self.accept)
+        btn_close.setMinimumHeight(48)
+        layout.addWidget(btn_close)
+
+
 class MainWindow(QMainWindow):
     def __init__(self, config: dict):
         super().__init__()
@@ -93,6 +305,8 @@ class MainWindow(QMainWindow):
         self.pdf_folder = ""
         self.rules: List[ValidNameRule] = []
         self.results: List[MatchResult] = []
+        self.scan_thread = None
+        self.scan_worker = None
 
         self.rule_repo = SQLiteRuleRepository(config)
         self.rule_repo.initialize()
@@ -101,8 +315,22 @@ class MainWindow(QMainWindow):
         self.rule_engine = RuleEngine(config)
         self.rename_service = RenameService(config)
 
+        self._build_menu()
         self._build_ui()
         self._load_rules_on_start()
+
+    def _build_menu(self):
+        rules_menu = self.menuBar().addMenu("Reglas")
+
+        edit_rules_action = rules_menu.addAction("Editar reglas")
+        edit_rules_action.triggered.connect(self.show_catalog)
+
+        reload_rules_action = rules_menu.addAction("Recargar catalogo")
+        reload_rules_action.triggered.connect(self.load_rules)
+
+        help_menu = self.menuBar().addMenu("Ayuda")
+        credits_action = help_menu.addAction("Creditos")
+        credits_action.triggered.connect(self.show_credits)
 
     def _build_ui(self):
         central = QWidget()
@@ -120,20 +348,45 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(title)
         main_layout.addWidget(subtitle)
 
+        self.tabs = QTabWidget()
+        workflow_tab = QWidget()
+        results_tab = QWidget()
+        log_tab = QWidget()
+
+        workflow_layout = QVBoxLayout(workflow_tab)
+        workflow_layout.setContentsMargins(10, 10, 10, 10)
+        workflow_layout.setSpacing(14)
+
+        results_layout = QVBoxLayout(results_tab)
+        results_layout.setContentsMargins(10, 10, 10, 10)
+        results_layout.setSpacing(12)
+
+        activity_layout = QVBoxLayout(log_tab)
+        activity_layout.setContentsMargins(10, 10, 10, 10)
+        activity_layout.setSpacing(12)
+
+        self.tabs.addTab(workflow_tab, "1. Preparar")
+        self.tabs.addTab(results_tab, "2. Revisar resultados")
+        self.tabs.addTab(log_tab, "Registro")
+        main_layout.addWidget(self.tabs, stretch=1)
+
         top_card = self._build_card()
         top_layout = QVBoxLayout(top_card)
 
         row1 = QHBoxLayout()
         lbl_catalog = QLabel("Catálogo interno:")
         self.catalog_status = QLineEdit()
+        lbl_catalog.setText("Reglas activas:")
         self.catalog_status.setReadOnly(True)
         self.catalog_status.setPlaceholderText("La tabla local se carga al abrir la aplicación")
 
         btn_reload_rules = self._big_button("Recargar catálogo")
         btn_reload_rules.clicked.connect(self.load_rules)
+        btn_reload_rules.setText("Recargar reglas")
 
         btn_view_catalog = self._big_button("Ver catálogo")
         btn_view_catalog.clicked.connect(self.show_catalog)
+        btn_view_catalog.setText("Editar reglas")
 
         row1.addWidget(lbl_catalog)
         row1.addWidget(self.catalog_status, stretch=1)
@@ -152,7 +405,7 @@ class MainWindow(QMainWindow):
         row2.addWidget(btn_folder)
         top_layout.addLayout(row2)
 
-        main_layout.addWidget(top_card)
+        workflow_layout.addWidget(top_card)
 
         metrics_card = self._build_card()
         metrics_layout = QGridLayout(metrics_card)
@@ -164,12 +417,12 @@ class MainWindow(QMainWindow):
         metrics_layout.addWidget(self.lbl_ready["box"], 0, 1)
         metrics_layout.addWidget(self.lbl_review["box"], 0, 2)
         metrics_layout.addWidget(self.lbl_nomatch["box"], 0, 3)
-        main_layout.addWidget(metrics_card)
+        workflow_layout.addWidget(metrics_card)
 
         actions_card = self._build_card()
         actions_layout = QGridLayout(actions_card)
-        btn_scan = self._big_button("1. Analizar PDFs")
-        btn_scan.clicked.connect(self.analyze_pdfs)
+        self.btn_scan = self._big_button("1. Analizar PDFs")
+        self.btn_scan.clicked.connect(self.analyze_pdfs)
         btn_manual = self._big_button("2. Asignar nombre manual")
         btn_manual.clicked.connect(self.manual_assign)
         btn_preview = self._big_button("3. Previsualizar destino")
@@ -181,13 +434,40 @@ class MainWindow(QMainWindow):
         btn_export = self._big_button("Exportar auditoría")
         btn_export.clicked.connect(self.export_audit)
 
-        actions_layout.addWidget(btn_scan, 0, 0)
+        actions_layout.addWidget(self.btn_scan, 0, 0)
         actions_layout.addWidget(btn_manual, 0, 1)
         actions_layout.addWidget(btn_preview, 0, 2)
         actions_layout.addWidget(btn_backup, 1, 0)
         actions_layout.addWidget(btn_apply, 1, 1)
         actions_layout.addWidget(btn_export, 1, 2)
-        main_layout.addWidget(actions_card)
+        workflow_layout.addWidget(actions_card)
+
+        self.processing_status = QLabel("")
+        self.processing_status.setObjectName("statusLabel")
+        workflow_layout.addWidget(self.processing_status)
+        workflow_layout.addStretch(1)
+
+        results_actions = self._build_card()
+        results_actions_layout = QHBoxLayout(results_actions)
+        btn_results_manual = self._big_button("Asignar nombre manual")
+        btn_results_manual.clicked.connect(self.manual_assign)
+        btn_results_preview = self._big_button("Previsualizar destino")
+        btn_results_preview.clicked.connect(self.preview_targets)
+        btn_results_backup = self._big_button("Crear respaldo")
+        btn_results_backup.clicked.connect(self.create_backup)
+        btn_results_apply = self._big_button("Aplicar renombrado")
+        btn_results_apply.clicked.connect(self.apply_rename)
+        btn_results_export = self._big_button("Exportar auditoria")
+        btn_results_export.clicked.connect(self.export_audit)
+        for button in (
+            btn_results_manual,
+            btn_results_preview,
+            btn_results_backup,
+            btn_results_apply,
+            btn_results_export,
+        ):
+            results_actions_layout.addWidget(button)
+        results_layout.addWidget(results_actions)
 
         self.table = QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels(["Archivo actual", "Sugerido", "Manual", "Confianza", "Estado", "Motivo", "Destino", "Ruta"])
@@ -208,17 +488,17 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
 
-        main_layout.addWidget(self.table, stretch=1)
+        results_layout.addWidget(self.table, stretch=1)
 
         log_card = self._build_card()
         log_layout = QVBoxLayout(log_card)
         log_title = QLabel("Mensajes del sistema")
         self.log = QTextEdit()
         self.log.setReadOnly(True)
-        self.log.setMinimumHeight(140)
+        self.log.setMinimumHeight(420)
         log_layout.addWidget(log_title)
         log_layout.addWidget(self.log)
-        main_layout.addWidget(log_card)
+        activity_layout.addWidget(log_card, stretch=1)
 
         self.setCentralWidget(central)
         self._apply_accessible_style()
@@ -259,6 +539,7 @@ class MainWindow(QMainWindow):
             QFrame#card { background: white; border: 1px solid #d7dde3; border-radius: 12px; }
             QLabel#titleLabel { font-size: 22pt; font-weight: 700; color: #1a2a33; }
             QLabel#subtitleLabel { font-size: 12pt; color: #51606b; margin-bottom: 4px; }
+            QLabel#statusLabel { font-size: 12pt; color: #1b5b7d; font-weight: 600; padding: 8px; }
             QLabel#metricTitle { font-size: 11pt; color: #52616d; }
             QLabel#metricValue { font-size: 24pt; font-weight: 700; color: #173b52; }
             QPushButton {
@@ -299,10 +580,22 @@ class MainWindow(QMainWindow):
     def show_catalog(self):
         try:
             rows = self.rule_repo.list_catalog_rows()
-            dlg = CatalogDialog(rows, self)
-            dlg.exec()
+            dlg = EditableCatalogDialog(rows, self)
+            while dlg.exec() == QDialog.DialogCode.Accepted and dlg.saved:
+                try:
+                    self.rule_repo.replace_catalog_rows(dlg.rows())
+                    self.load_rules()
+                    self.log_message("Reglas guardadas correctamente")
+                    return
+                except Exception as exc:
+                    dlg.saved = False
+                    QMessageBox.critical(self, "Error al guardar reglas", str(exc))
         except Exception as exc:
             QMessageBox.critical(self, "Error al abrir catálogo", str(exc))
+
+    def show_credits(self):
+        dlg = CreditsDialog(self.config, self)
+        dlg.exec()
 
     def select_folder(self):
         path = QFileDialog.getExistingDirectory(self, "Seleccionar carpeta de PDFs")
@@ -311,6 +604,9 @@ class MainWindow(QMainWindow):
             self.folder_edit.setText(path)
 
     def analyze_pdfs(self):
+        if self.scan_thread and self.scan_thread.isRunning():
+            QMessageBox.information(self, "Analisis en curso", "Ya hay un analisis de PDFs ejecutandose")
+            return
         self.pdf_folder = self.folder_edit.text().strip()
         if not self.rules:
             QMessageBox.warning(self, "Falta catálogo", "La tabla interna no tiene reglas activas")
@@ -318,11 +614,48 @@ class MainWindow(QMainWindow):
         if not self.pdf_folder:
             QMessageBox.warning(self, "Falta carpeta", "Debe seleccionar la carpeta con PDFs")
             return
-        candidates = self.pdf_scanner.scan_folder(self.pdf_folder)
-        self.results = [self.rule_engine.match(item, self.rules) for item in candidates]
+        self._set_scan_busy(True, "Iniciando analisis de PDFs...")
+        self.scan_thread = QThread(self)
+        self.scan_worker = AnalyzeWorker(self.config, self.pdf_folder, list(self.rules))
+        self.scan_worker.moveToThread(self.scan_thread)
+
+        self.scan_thread.started.connect(self.scan_worker.run)
+        self.scan_worker.progress.connect(self._set_scan_status)
+        self.scan_worker.finished.connect(self._finish_scan)
+        self.scan_worker.failed.connect(self._fail_scan)
+        self.scan_worker.finished.connect(self.scan_thread.quit)
+        self.scan_worker.failed.connect(self.scan_thread.quit)
+        self.scan_worker.finished.connect(self.scan_worker.deleteLater)
+        self.scan_worker.failed.connect(self.scan_worker.deleteLater)
+        self.scan_thread.finished.connect(self.scan_thread.deleteLater)
+        self.scan_thread.finished.connect(self._clear_scan_worker)
+        self.scan_thread.start()
+        self.log_message("Analisis iniciado en segundo plano")
+
+    def _finish_scan(self, results: list):
+        self.results = results
         self.populate_table()
         self._refresh_metrics()
+        self.tabs.setCurrentIndex(1)
+        self._set_scan_busy(False, f"Analisis completado: {len(self.results)} PDF(s)")
         self.log_message(f"PDFs analizados: {len(self.results)}")
+
+    def _fail_scan(self, message: str):
+        self._set_scan_busy(False, "Error durante el analisis")
+        QMessageBox.critical(self, "Error al analizar PDFs", message)
+        self.log_message(f"Error al analizar PDFs: {message}")
+
+    def _clear_scan_worker(self):
+        self.scan_thread = None
+        self.scan_worker = None
+
+    def _set_scan_status(self, message: str):
+        self.processing_status.setText(message)
+        self.log_message(message)
+
+    def _set_scan_busy(self, busy: bool, message: str):
+        self.btn_scan.setEnabled(not busy)
+        self.processing_status.setText(message)
 
     def preview_targets(self):
         if not self.results:
@@ -332,6 +665,7 @@ class MainWindow(QMainWindow):
         self.results = self.rename_service.preview_targets(self.results)
         self.populate_table()
         self._refresh_metrics()
+        self.tabs.setCurrentIndex(1)
         self.log_message("Previsualización completada")
 
     def create_backup(self):
@@ -358,6 +692,7 @@ class MainWindow(QMainWindow):
         self.results = self.rename_service.apply(self.results)
         self.populate_table()
         self._refresh_metrics()
+        self.tabs.setCurrentIndex(1)
         self.log_message("Renombrado ejecutado")
 
     def export_audit(self):

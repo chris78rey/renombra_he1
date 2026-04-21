@@ -14,7 +14,7 @@
 1. **Riesgo funcional**: el nombre actual del sistema no está estandarizado todavía.
    - Protección: la lógica no depende únicamente del nombre actual. También usa texto interno del PDF y reglas del Excel.
 2. **Riesgo de sobreescritura**: dos archivos pueden terminar con el mismo nombre final.
-   - Protección: el sistema agrega sufijos `_DUP_1`, `_DUP_2`, etc.
+   - Protección: el sistema numera duplicados como `_1`, `_2`, `_3`, etc.
 3. **Riesgo de pérdida de datos**: renombrado físico irreversible si se hace sin respaldo.
    - Protección: botón de backup completo de la carpeta antes de aplicar cambios.
 4. **Riesgo legal/licenciamiento**: **PyQt6** tiene implicaciones GPL/comerciales.
@@ -109,7 +109,7 @@ Estas fueron incorporadas en `config/app_config.json` como reglas base.
 - Confirmar que cada PDF quedó con un nombre permitido por Excel.
 - Confirmar que no se perdió cantidad de archivos.
 - Confirmar que no hubo errores en el log.
-- Confirmar que los archivos duplicados quedaron con sufijo `_DUP_n`.
+- Confirmar que los archivos duplicados quedaron con sufijo `_n`.
 - Confirmar que existe CSV y JSON de auditoría.
 
 ## 8. Checklist de no-rotura

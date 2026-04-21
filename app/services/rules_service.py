@@ -75,20 +75,20 @@ class RuleEngine:
         for kw in rule.keywords_name:
             kw_norm = PdfScanner.normalize_name(kw)
             if kw_norm and kw_norm in name_norm:
-                score += 30
-                reasons.append(f"Keyword en nombre: {kw}")
+                score += 90
+                reasons.append(f"El nombre del archivo contiene: {kw}")
 
         for kw in rule.keywords_text:
             text_kw = PdfScanner.normalize_text(kw)
             if text_kw and text_kw in candidate.normalized_text:
-                score += 35
-                reasons.append(f"Keyword en contenido: {kw}")
+                score += 85
+                reasons.append(f"El texto del PDF contiene: {kw}")
 
         if rule.text_regex and candidate.detected_text:
             try:
                 if re.search(rule.text_regex, candidate.detected_text, flags=re.IGNORECASE):
-                    score += 40
-                    reasons.append(f"Regex en contenido: {rule.text_regex}")
+                    score += 90
+                    reasons.append(f"El texto cumple regex: {rule.text_regex}")
             except re.error:
                 reasons.append(f"Regex inválido en catálogo: {rule.text_regex}")
 
