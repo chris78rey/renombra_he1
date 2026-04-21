@@ -314,6 +314,7 @@ class MainWindow(QMainWindow):
         self.results: List[MatchResult] = []
         self.scan_thread = None
         self.scan_worker = None
+        self.auto_apply_after_scan = False
 
         self.rule_repo = SQLiteRuleRepository(config)
         self.rule_repo.initialize()
@@ -323,7 +324,7 @@ class MainWindow(QMainWindow):
         self.rename_service = RenameService(config)
 
         self._build_menu()
-        self._build_ui()
+        self._build_minimal_ui()
         self._load_rules_on_start()
 
     def _build_menu(self):
@@ -344,6 +345,68 @@ class MainWindow(QMainWindow):
         help_menu = self.menuBar().addMenu("Ayuda")
         credits_action = help_menu.addAction("Creditos")
         credits_action.triggered.connect(self.show_credits)
+
+    def _build_minimal_ui(self):
+        central = QWidget()
+        main_layout = QVBoxLayout(central)
+        main_layout.setContentsMargins(28, 28, 28, 28)
+        main_layout.setSpacing(18)
+
+        title = QLabel(self.config.get("app_name", "Renombrador PDF"))
+        title.setObjectName("titleLabel")
+        subtitle = QLabel("Seleccione la carpeta con PDFs y ejecute el renombrado.")
+        subtitle.setWordWrap(True)
+        subtitle.setObjectName("subtitleLabel")
+        main_layout.addWidget(title)
+        main_layout.addWidget(subtitle)
+
+        folder_card = self._build_card()
+        folder_layout = QVBoxLayout(folder_card)
+        lbl_folder = QLabel("Carpeta con PDFs")
+        self.folder_edit = QLineEdit()
+        self.folder_edit.setPlaceholderText("Seleccione la carpeta que contiene los PDFs")
+        btn_folder = self._big_button("Elegir carpeta")
+        btn_folder.clicked.connect(self.select_folder)
+
+        folder_row = QHBoxLayout()
+        folder_row.addWidget(self.folder_edit, stretch=1)
+        folder_row.addWidget(btn_folder)
+        folder_layout.addWidget(lbl_folder)
+        folder_layout.addLayout(folder_row)
+        main_layout.addWidget(folder_card)
+
+        action_card = self._build_card()
+        action_layout = QVBoxLayout(action_card)
+        self.btn_apply_all = self._big_button("Aplicar renombrado")
+        self.btn_apply_all.clicked.connect(self.run_minimal_rename)
+        self.btn_scan = self.btn_apply_all
+        action_layout.addWidget(self.btn_apply_all)
+        main_layout.addWidget(action_card)
+
+        self.processing_status = QLabel("")
+        self.processing_status.setObjectName("statusLabel")
+        main_layout.addWidget(self.processing_status)
+
+        self.catalog_status = QLineEdit()
+        self.catalog_status.hide()
+        self.lbl_total = self._metric_box("Total", "0")
+        self.lbl_ready = self._metric_box("Listos", "0")
+        self.lbl_review = self._metric_box("Revisar", "0")
+        self.lbl_nomatch = self._metric_box("Sin match", "0")
+        for metric in (self.lbl_total, self.lbl_ready, self.lbl_review, self.lbl_nomatch):
+            metric["box"].hide()
+
+        self.table = QTableWidget(0, 8)
+        self.table.setHorizontalHeaderLabels(["Archivo actual", "Sugerido", "Manual", "Confianza", "Estado", "Motivo", "Destino", "Ruta"])
+        self.table.hide()
+
+        self.log = QTextEdit()
+        self.log.setReadOnly(True)
+        self.log.hide()
+
+        main_layout.addStretch(1)
+        self.setCentralWidget(central)
+        self._apply_accessible_style()
 
     def _build_ui(self):
         central = QWidget()
@@ -749,15 +812,56 @@ class MainWindow(QMainWindow):
         self.scan_thread.start()
         self.log_message("Analisis iniciado en segundo plano")
 
+    def run_minimal_rename(self):
+        if self.scan_thread and self.scan_thread.isRunning():
+            QMessageBox.information(self, "Proceso en curso", "Ya hay un renombrado ejecutandose")
+            return
+
+        self.auto_apply_after_scan = True
+        self.analyze_pdfs()
+
     def _finish_scan(self, results: list):
         self.results = results
         self.populate_table()
         self._refresh_metrics()
-        self.tabs.setCurrentIndex(1)
         self._set_scan_busy(False, f"Analisis completado: {len(self.results)} PDF(s)")
         self.log_message(f"PDFs analizados: {len(self.results)}")
+        if self.auto_apply_after_scan:
+            self._apply_minimal_rename_after_scan()
+
+    def _apply_minimal_rename_after_scan(self):
+        self.auto_apply_after_scan = False
+        if not self.results:
+            self.processing_status.setText("Completado: no se encontraron PDFs")
+            return
+
+        try:
+            self._set_scan_busy(True, "Creando respaldo...")
+            backup = self.rename_service.backup_folder(self.pdf_folder)
+            self.log_message(f"Respaldo creado: {backup}")
+
+            self._set_scan_busy(True, "Renombrando archivos...")
+            self.results = self.rename_service.preview_targets(self.results)
+            self.results = self.rename_service.apply(self.results)
+            self.populate_table()
+            self._refresh_metrics()
+
+            renamed = sum(1 for item in self.results if item.status == "RENOMBRADO")
+            errors = sum(1 for item in self.results if item.status == "ERROR")
+            if errors:
+                self.processing_status.setText(f"Completado con errores: {renamed} renombrados, {errors} errores")
+            else:
+                self.processing_status.setText("Completado")
+            self.log_message("Renombrado ejecutado")
+        except Exception as exc:
+            self.processing_status.setText("Error durante el renombrado")
+            QMessageBox.critical(self, "Error al renombrar", str(exc))
+            self.log_message(f"Error al renombrar: {exc}")
+        finally:
+            self._set_scan_busy(False, self.processing_status.text())
 
     def _fail_scan(self, message: str):
+        self.auto_apply_after_scan = False
         self._set_scan_busy(False, "Error durante el analisis")
         QMessageBox.critical(self, "Error al analizar PDFs", message)
         self.log_message(f"Error al analizar PDFs: {message}")
@@ -782,7 +886,8 @@ class MainWindow(QMainWindow):
         self.results = self.rename_service.preview_targets(self.results)
         self.populate_table()
         self._refresh_metrics()
-        self.tabs.setCurrentIndex(1)
+        if hasattr(self, "tabs"):
+            self.tabs.setCurrentIndex(1)
         self.log_message("Previsualización completada")
 
     def create_backup(self):
@@ -809,7 +914,8 @@ class MainWindow(QMainWindow):
         self.results = self.rename_service.apply(self.results)
         self.populate_table()
         self._refresh_metrics()
-        self.tabs.setCurrentIndex(1)
+        if hasattr(self, "tabs"):
+            self.tabs.setCurrentIndex(1)
         self.log_message("Renombrado ejecutado")
 
     def export_audit(self):

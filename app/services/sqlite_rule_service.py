@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import sqlite3
 from pathlib import Path
 from typing import List
@@ -12,13 +13,18 @@ from app.models import ValidNameRule
 class SQLiteRuleRepository:
     def __init__(self, config: dict):
         self.config = config
-        self.base_dir = Path(__file__).resolve().parents[2]
+        self.resource_base = Path(config.get("_resource_base", Path(__file__).resolve().parents[2]))
+        self.user_data_base = Path(config.get("_user_data_base", self.resource_base))
         self.db_cfg = config.get("database", {})
-        self.db_path = self.base_dir / self.db_cfg.get("sqlite_path", "config/catalogo_reglas.db")
-        self.seed_sql_path = self.base_dir / self.db_cfg.get("seed_sql_path", "datos_base/nombres_validos.sql")
+        self.db_path = self.user_data_base / self.db_cfg.get("sqlite_path", "config/catalogo_reglas.db")
+        self.seed_sql_path = self.resource_base / self.db_cfg.get("seed_sql_path", "datos_base/nombres_validos.sql")
 
     def initialize(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        legacy_db_path = self.resource_base / self.db_cfg.get("sqlite_path", "config/catalogo_reglas.db")
+        if not self.db_path.exists() and legacy_db_path.exists() and legacy_db_path.resolve() != self.db_path.resolve():
+            shutil.copy2(legacy_db_path, self.db_path)
+
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute(
