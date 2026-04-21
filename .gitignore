@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtualenv
+.venv/
+venv/
+
+# SQLite local
+config/catalogo_reglas.db
+
+# IA summary
+repomix-output.xml
+
+# OS
+.DS_Store
+Thumbs.db
