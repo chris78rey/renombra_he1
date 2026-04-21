@@ -1,16 +1,9 @@
+
 {
   "app_name": "Renombrador PDF Hospitalario",
-  "excel": {
-    "sheet_name": 0,
-    "columns": {
-      "final_name": ["NOMBRE_FINAL", "NOMBRE_PDF", "FINAL_NAME", "nombre_final", "nombre_pdf"],
-      "description": ["NOTA", "DESCRIPCION", "DESCRIPTION", "nota", "descripcion"],
-      "active": ["ACTIVO", "ACTIVE", "activo"],
-      "order": ["ORDEN", "ORDER", "orden"],
-      "keywords_name": ["PALABRAS_NOMBRE", "KEYWORDS_NAME", "keywords_name"],
-      "keywords_text": ["PALABRAS_TEXTO", "KEYWORDS_TEXT", "keywords_text"],
-      "text_regex": ["REGEX_TEXTO", "TEXT_REGEX", "text_regex"]
-    }
+  "database": {
+    "sqlite_path": "config/catalogo_reglas.db",
+    "seed_sql_path": "datos_base/nombres_validos.sql"
   },
   "pdf": {
     "extract_pages": 5,
@@ -39,6 +32,9 @@
       "score": 95
     }
   ],
+  "ui": {
+    "base_font_size": 13
+  },
   "output": {
     "audit_csv_name": "auditoria_renombrado.csv",
     "report_json_name": "auditoria_renombrado.json"
