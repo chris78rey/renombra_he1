@@ -410,15 +410,24 @@ class MainWindow(QMainWindow):
             item = self.table.item(row, 2)
             self.results[row].final_name_manual = item.text().strip() if item else ""
 
+    def _texto_humano_resultado(self, result) -> str:
+        nombre_final = result.final_name_manual.strip() or result.suggested_final_name.strip()
+        if not nombre_final:
+            return "No se pudo determinar el nombre final"
+        if result.original_name.strip().upper() == nombre_final.strip().upper():
+            return f"El archivo ya tiene el nombre correcto: {nombre_final}"
+        return f"El archivo actual es {result.original_name} y debería quedar como {nombre_final}"
+
     def populate_table(self):
         self.table.setRowCount(len(self.results))
         for row, result in enumerate(self.results):
+            texto_motivo = self._texto_humano_resultado(result)
             self.table.setItem(row, 0, QTableWidgetItem(result.original_name))
             self.table.setItem(row, 1, QTableWidgetItem(result.suggested_final_name))
             self.table.setItem(row, 2, QTableWidgetItem(result.final_name_manual))
             self.table.setItem(row, 3, QTableWidgetItem(str(result.confidence)))
             self.table.setItem(row, 4, QTableWidgetItem(result.status))
-            self.table.setItem(row, 5, QTableWidgetItem(result.reason))
+            self.table.setItem(row, 5, QTableWidgetItem(texto_motivo))
             self.table.setItem(row, 6, QTableWidgetItem(str(result.target_path or "")))
             self.table.setItem(row, 7, QTableWidgetItem(str(result.original_path)))
 
