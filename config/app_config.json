@@ -37,9 +37,16 @@
   },
   "credits": {
     "version": "1.0",
-    "author": "Equipo de implementacion",
-    "organization": "",
-    "description": "Herramienta para analizar, auditar y renombrar PDFs hospitalarios."
+    "year": "2026",
+    "authors": [
+      "Sandra Llive",
+      "Leticia Moreno",
+      "Vinicio Grarrido",
+      "Jaime Padilla",
+      "Christian Ruiz"
+    ],
+    "organization": "Hospital de Especialidades Fuerzas Armadas No. 1",
+    "description": "Software especifico para el Hospital de Especialidades Fuerzas Armadas No. 1."
   },
   "output": {
     "audit_csv_name": "auditoria_renombrado.csv",

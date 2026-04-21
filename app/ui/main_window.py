@@ -1,6 +1,8 @@
 
 from __future__ import annotations
 
+import csv
+
 from typing import List
 
 from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal
@@ -265,7 +267,8 @@ class CreditsDialog(QDialog):
         credits = config.get("credits", {})
         app_name = config.get("app_name", "Renombrador PDF")
         version = credits.get("version", "1.0")
-        author = credits.get("author", "Equipo de implementacion")
+        authors = credits.get("authors") or [credits.get("author", "Equipo de implementacion")]
+        year = credits.get("year", "2026")
         organization = credits.get("organization", "")
         description = credits.get("description", "Herramienta para analizar, auditar y renombrar PDFs hospitalarios.")
 
@@ -276,12 +279,16 @@ class CreditsDialog(QDialog):
 
         body = QTextEdit()
         body.setReadOnly(True)
+        author_lines = "\n".join(f"- {author}" for author in authors)
         body.setText(
             "\n".join(
                 [
                     f"Version: {version}",
-                    f"Creditos: {author}",
+                    f"Anio: {year}",
                     f"Organizacion: {organization}" if organization else "",
+                    "",
+                    "Autores:",
+                    author_lines,
                     "",
                     description,
                 ]
@@ -324,6 +331,12 @@ class MainWindow(QMainWindow):
 
         edit_rules_action = rules_menu.addAction("Editar reglas")
         edit_rules_action.triggered.connect(self.show_catalog)
+
+        export_rules_action = rules_menu.addAction("Exportar reglas CSV")
+        export_rules_action.triggered.connect(self.export_rules_csv)
+
+        import_rules_action = rules_menu.addAction("Importar reglas CSV")
+        import_rules_action.triggered.connect(self.import_rules_csv)
 
         reload_rules_action = rules_menu.addAction("Recargar catalogo")
         reload_rules_action.triggered.connect(self.load_rules)
@@ -423,23 +436,19 @@ class MainWindow(QMainWindow):
         actions_layout = QGridLayout(actions_card)
         self.btn_scan = self._big_button("1. Analizar PDFs")
         self.btn_scan.clicked.connect(self.analyze_pdfs)
-        btn_manual = self._big_button("2. Asignar nombre manual")
-        btn_manual.clicked.connect(self.manual_assign)
-        btn_preview = self._big_button("3. Previsualizar destino")
+        btn_preview = self._big_button("Previsualizar destino")
         btn_preview.clicked.connect(self.preview_targets)
-        btn_backup = self._big_button("4. Crear respaldo")
+        btn_backup = self._big_button("Crear respaldo")
         btn_backup.clicked.connect(self.create_backup)
-        btn_apply = self._big_button("5. Aplicar renombrado")
+        btn_apply = self._big_button("2. Aplicar renombrado")
         btn_apply.clicked.connect(self.apply_rename)
         btn_export = self._big_button("Exportar auditoría")
         btn_export.clicked.connect(self.export_audit)
 
         actions_layout.addWidget(self.btn_scan, 0, 0)
-        actions_layout.addWidget(btn_manual, 0, 1)
-        actions_layout.addWidget(btn_preview, 0, 2)
-        actions_layout.addWidget(btn_backup, 1, 0)
-        actions_layout.addWidget(btn_apply, 1, 1)
-        actions_layout.addWidget(btn_export, 1, 2)
+        actions_layout.addWidget(btn_apply, 0, 1)
+        actions_layout.addWidget(btn_preview, 1, 0)
+        actions_layout.addWidget(btn_backup, 1, 1)
         workflow_layout.addWidget(actions_card)
 
         self.processing_status = QLabel("")
@@ -449,22 +458,19 @@ class MainWindow(QMainWindow):
 
         results_actions = self._build_card()
         results_actions_layout = QHBoxLayout(results_actions)
-        btn_results_manual = self._big_button("Asignar nombre manual")
-        btn_results_manual.clicked.connect(self.manual_assign)
+        btn_results_scan = self._big_button("Analizar PDFs")
+        btn_results_scan.clicked.connect(self.analyze_pdfs)
         btn_results_preview = self._big_button("Previsualizar destino")
         btn_results_preview.clicked.connect(self.preview_targets)
         btn_results_backup = self._big_button("Crear respaldo")
         btn_results_backup.clicked.connect(self.create_backup)
         btn_results_apply = self._big_button("Aplicar renombrado")
         btn_results_apply.clicked.connect(self.apply_rename)
-        btn_results_export = self._big_button("Exportar auditoria")
-        btn_results_export.clicked.connect(self.export_audit)
         for button in (
-            btn_results_manual,
+            btn_results_scan,
+            btn_results_apply,
             btn_results_preview,
             btn_results_backup,
-            btn_results_apply,
-            btn_results_export,
         ):
             results_actions_layout.addWidget(button)
         results_layout.addWidget(results_actions)
@@ -592,6 +598,117 @@ class MainWindow(QMainWindow):
                     QMessageBox.critical(self, "Error al guardar reglas", str(exc))
         except Exception as exc:
             QMessageBox.critical(self, "Error al abrir catálogo", str(exc))
+
+    def export_rules_csv(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Exportar reglas",
+            "reglas_renombrador.csv",
+            "CSV (*.csv)",
+        )
+        if not path:
+            return
+
+        if not path.lower().endswith(".csv"):
+            path = f"{path}.csv"
+
+        rows = self.rule_repo.list_catalog_rows()
+        headers = [
+            "Si el nombre contiene",
+            "Renombrar como",
+            "Si el texto del PDF contiene",
+            "Regex en texto",
+            "Activo",
+            "Prioridad",
+            "Nota",
+            "Tipo",
+        ]
+
+        try:
+            with open(path, "w", encoding="utf-8-sig", newline="") as fh:
+                writer = csv.writer(fh)
+                writer.writerow(headers)
+                for row in rows:
+                    writer.writerow(
+                        [
+                            row.get("palabras_nombre", ""),
+                            row.get("nombre_pdf", ""),
+                            row.get("palabras_texto", ""),
+                            row.get("regex_texto", ""),
+                            row.get("activo", ""),
+                            row.get("orden", ""),
+                            row.get("nota", ""),
+                            "Base" if row.get("es_base") == "S" else "Personalizada",
+                        ]
+                    )
+            self.log_message(f"Reglas exportadas: {path}")
+            QMessageBox.information(self, "Reglas exportadas", f"Archivo creado:\n{path}")
+        except Exception as exc:
+            QMessageBox.critical(self, "Error al exportar reglas", str(exc))
+
+    def import_rules_csv(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Importar reglas",
+            "",
+            "CSV (*.csv)",
+        )
+        if not path:
+            return
+
+        confirm = QMessageBox.question(
+            self,
+            "Importar reglas",
+            "Se importaran las reglas del CSV y se reemplazara el catalogo editable.\n\n"
+            "Las reglas base del sistema se mantendran protegidas.\n\n"
+            "Desea continuar?",
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            rows = self._read_rules_csv(path)
+            self.rule_repo.replace_catalog_rows(rows)
+            self.load_rules()
+            self.log_message(f"Reglas importadas: {path}")
+            QMessageBox.information(self, "Reglas importadas", f"Reglas importadas correctamente:\n{path}")
+        except Exception as exc:
+            QMessageBox.critical(self, "Error al importar reglas", str(exc))
+
+    def _read_rules_csv(self, path: str) -> list[dict]:
+        expected = {
+            "Si el nombre contiene": "palabras_nombre",
+            "Renombrar como": "nombre_pdf",
+            "Si el texto del PDF contiene": "palabras_texto",
+            "Regex en texto": "regex_texto",
+            "Activo": "activo",
+            "Prioridad": "orden",
+            "Nota": "nota",
+            "Tipo": "es_base",
+        }
+
+        with open(path, "r", encoding="utf-8-sig", newline="") as fh:
+            reader = csv.DictReader(fh)
+            missing = [name for name in expected if name not in (reader.fieldnames or [])]
+            if missing:
+                raise ValueError("Faltan columnas requeridas: " + ", ".join(missing))
+
+            rows = []
+            for index, csv_row in enumerate(reader, start=2):
+                nombre_pdf = (csv_row.get("Renombrar como") or "").strip()
+                if not nombre_pdf:
+                    raise ValueError(f"La fila {index} no tiene valor en 'Renombrar como'")
+                row = {}
+                for csv_name, field_name in expected.items():
+                    value = (csv_row.get(csv_name) or "").strip()
+                    if field_name == "es_base":
+                        value = "S" if value.lower() == "base" else "N"
+                    row[field_name] = value
+                rows.append(row)
+
+        if not rows:
+            raise ValueError("El CSV no tiene reglas para importar")
+        return rows
 
     def show_credits(self):
         dlg = CreditsDialog(self.config, self)
