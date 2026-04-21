@@ -40,7 +40,7 @@ class RenameService:
             final_name = items[0].effective_final_name()
             if len(items) == 1:
                 item = items[0]
-                item.target_path = self._build_available_target(folder, final_name, reserved)
+                item.target_path = self._build_available_target(folder, final_name, reserved, item.original_path)
                 reserved.add(str(item.target_path).upper())
                 continue
 
@@ -106,8 +106,11 @@ class RenameService:
         return csv_path, json_path
 
     @staticmethod
-    def _build_available_target(folder: Path, final_name: str, reserved: set[str]) -> Path:
+    def _build_available_target(folder: Path, final_name: str, reserved: set[str], current_path: Path | None = None) -> Path:
         target = folder / final_name
+        if current_path and target.resolve() == current_path.resolve():
+            return target
+
         if not target.exists() and str(target).upper() not in reserved:
             return target
 
