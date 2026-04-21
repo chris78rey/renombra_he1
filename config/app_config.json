@@ -1,0 +1,46 @@
+{
+  "app_name": "Renombrador PDF Hospitalario",
+  "excel": {
+    "sheet_name": 0,
+    "columns": {
+      "final_name": ["NOMBRE_FINAL", "NOMBRE_PDF", "FINAL_NAME", "nombre_final", "nombre_pdf"],
+      "description": ["NOTA", "DESCRIPCION", "DESCRIPTION", "nota", "descripcion"],
+      "active": ["ACTIVO", "ACTIVE", "activo"],
+      "order": ["ORDEN", "ORDER", "orden"],
+      "keywords_name": ["PALABRAS_NOMBRE", "KEYWORDS_NAME", "keywords_name"],
+      "keywords_text": ["PALABRAS_TEXTO", "KEYWORDS_TEXT", "keywords_text"],
+      "text_regex": ["REGEX_TEXTO", "TEXT_REGEX", "text_regex"]
+    }
+  },
+  "pdf": {
+    "extract_pages": 5,
+    "max_chars": 50000
+  },
+  "built_in_rules": [
+    {
+      "type": "filename_contains",
+      "pattern": "PLANILLA",
+      "target": "PI.pdf",
+      "reason": "Regla heredada: PLANILLA -> PI.pdf",
+      "score": 90
+    },
+    {
+      "type": "filename_contains",
+      "pattern": "OTROS",
+      "target": "ORS.pdf",
+      "reason": "Regla heredada: OTROS -> ORS.pdf",
+      "score": 90
+    },
+    {
+      "type": "text_contains",
+      "pattern": "NOTASDEEVOLUCION",
+      "target": "002.pdf",
+      "reason": "Regla heredada por contenido: NOTAS DE EVOLUCION -> 002.pdf",
+      "score": 95
+    }
+  ],
+  "output": {
+    "audit_csv_name": "auditoria_renombrado.csv",
+    "report_json_name": "auditoria_renombrado.json"
+  }
+}
