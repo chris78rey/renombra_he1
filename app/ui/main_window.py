@@ -391,7 +391,7 @@ class MainWindow(QMainWindow):
             for row in selected_rows:
                 self.results[row].final_name_manual = value
                 self.results[row].status = "MANUAL"
-                self.results[row].reason = (self.results[row].reason + " | ").strip(" | ") + "Asignado manualmente"
+                self.results[row].reason = "Asignado manualmente por el usuario"
             self.populate_table()
             self._refresh_metrics()
             self.log_message(f"Asignación manual aplicada a {len(selected_rows)} archivo(s)")
@@ -410,26 +410,105 @@ class MainWindow(QMainWindow):
             item = self.table.item(row, 2)
             self.results[row].final_name_manual = item.text().strip() if item else ""
 
-    def _texto_humano_resultado(self, result) -> str:
-        nombre_final = result.final_name_manual.strip() or result.suggested_final_name.strip()
+    def _build_friendly_reason(self, result) -> str:
+        nombre_actual = (result.original_name or "").strip()
+        nombre_manual = (result.final_name_manual or "").strip()
+        nombre_sugerido = (result.suggested_final_name or "").strip()
+        nombre_final = nombre_manual or nombre_sugerido
+        status = (result.status or "").strip().upper()
+        motivo_original = (result.reason or "").strip()
+
+        def norm(value: str) -> str:
+            return value.strip().upper()
+
+
         if not nombre_final:
+            if motivo_original:
+                return f"No se pudo determinar el nombre final. Detalle: {motivo_original}"
             return "No se pudo determinar el nombre final"
-        if result.original_name.strip().upper() == nombre_final.strip().upper():
+
+        if norm(nombre_actual) == norm(nombre_final):
             return f"El archivo ya tiene el nombre correcto: {nombre_final}"
-        return f"El archivo actual es {result.original_name} y debería quedar como {nombre_final}"
+
+        if status == "MANUAL":
+            return f"El archivo actual es {nombre_actual} y se renombrará manualmente a {nombre_final}"
+
+        if status == "RENOMBRADO":
+            return f"El archivo {nombre_actual} fue renombrado a {nombre_final}"
+
+        if status == "YA_OK":
+            return f"El archivo ya estaba correcto: {nombre_final}"
+
+        if status == "SIN_MATCH":
+            if motivo_original:
+                return f"No se encontró una regla automática para {nombre_actual}. Detalle: {motivo_original}"
+            return f"No se encontró una regla automática para {nombre_actual}"
+
+        if status == "REVISAR":
+            if motivo_original:
+                return (
+                    f"El archivo actual es {nombre_actual} y podría corresponder a {nombre_final}. "
+                    f"Se recomienda revisar antes de renombrar. Detalle: {motivo_original}"
+                )
+            return (
+                f"El archivo actual es {nombre_actual} y podría corresponder a {nombre_final}. "
+                "Se recomienda revisar antes de renombrar"
+            )
+
+        if status in {"LISTO", "PENDIENTE"}:
+            if motivo_original:
+                return (
+                    f"El archivo actual es {nombre_actual} y debe renombrarse como {nombre_final}. "
+                    f"Detalle: {motivo_original}"
+                )
+            return f"El archivo actual es {nombre_actual} y debe renombrarse como {nombre_final}"
+
+        if motivo_original:
+            return (
+                f"El archivo actual es {nombre_actual} y el sistema propone {nombre_final}. "
+                f"Detalle: {motivo_original}"
+            )
+
+        return f"El archivo actual es {nombre_actual} y el sistema propone {nombre_final}"
 
     def populate_table(self):
         self.table.setRowCount(len(self.results))
         for row, result in enumerate(self.results):
-            texto_motivo = self._texto_humano_resultado(result)
-            self.table.setItem(row, 0, QTableWidgetItem(result.original_name))
-            self.table.setItem(row, 1, QTableWidgetItem(result.suggested_final_name))
-            self.table.setItem(row, 2, QTableWidgetItem(result.final_name_manual))
-            self.table.setItem(row, 3, QTableWidgetItem(str(result.confidence)))
-            self.table.setItem(row, 4, QTableWidgetItem(result.status))
-            self.table.setItem(row, 5, QTableWidgetItem(texto_motivo))
-            self.table.setItem(row, 6, QTableWidgetItem(str(result.target_path or "")))
-            self.table.setItem(row, 7, QTableWidgetItem(str(result.original_path)))
+            motivo_legible = self._build_friendly_reason(result)
+            valores = [
+                result.original_name,
+                result.suggested_final_name,
+                result.final_name_manual,
+                str(result.confidence),
+                result.status,
+                motivo_legible,
+                str(result.target_path or ""),
+                str(result.original_path),
+            ]
+            for col, valor in enumerate(valores):
+                cell = QTableWidgetItem(valor)
+                if col in (0, 1, 2, 3, 4, 6, 7):
+                    cell.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+                if col == 4:
+                    estado = (result.status or "").upper()
+                    if estado == "LISTO":
+                        cell.setText("Listo")
+                    elif estado == "REVISAR":
+                        cell.setText("Revisar")
+                    elif estado == "SIN_MATCH":
+                        cell.setText("Sin coincidencia")
+                    elif estado == "MANUAL":
+                        cell.setText("Manual")
+                    elif estado == "RENOMBRADO":
+                        cell.setText("Renombrado")
+                    elif estado == "YA_OK":
+                        cell.setText("Correcto")
+                    elif estado == "PENDIENTE":
+                        cell.setText("Pendiente")
+                if col == 5:
+                    cell.setToolTip(motivo_legible)
+                self.table.setItem(row, col, cell)
+        self.table.resizeRowsToContents()
 
     def _refresh_metrics(self):
         total = len(self.results)
