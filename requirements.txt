@@ -1,3 +1,5 @@
 PyQt6>=6.7
 PyMuPDF>=1.24
 python-dateutil>=2.9
+jaydebeapi>=1.2,<2
+JPype1>=1.5,<2
