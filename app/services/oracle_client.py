@@ -49,6 +49,7 @@ def connect_with_failover():
                 [ORACLE_USER, ORACLE_PASSWORD],
                 jars=[str(jar)],
             )
+            conn.jconn.setAutoCommit(False)  # type: ignore
             return conn
         except Exception as exc:
             last_exc = exc
