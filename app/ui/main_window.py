@@ -412,15 +412,16 @@ class MainWindow(QMainWindow):
             and r["original_name"] != r["suggested_final_name"]
         ]
 
-        groups: dict[str, list] = {}
+        groups: dict[tuple[str, str], list] = {}
         for item in candidates:
             dest = (item["suggested_final_name"] or "").strip()
             if not dest:
                 continue
-            groups.setdefault(dest, []).append(item)
+            orig = Path(item["original_path"])
+            groups.setdefault((str(orig.parent.resolve()), dest), []).append(item)
 
         renamed = 0
-        for dest, items in sorted(groups.items()):
+        for (parent_dir, dest), items in sorted(groups.items()):
             suffix = Path(dest).suffix
             stem = Path(dest).stem
 
@@ -437,7 +438,7 @@ class MainWindow(QMainWindow):
 
                     if not same_file:
                         self._log(
-                            f"  COLISION: {item['original_name']} no se renombro porque ya existe {dest}"
+                            f"  COLISION EN CARPETA: {item['original_name']} no se renombro porque ya existe {dest} en {orig.parent}"
                         )
                         continue
 
@@ -447,10 +448,7 @@ class MainWindow(QMainWindow):
 
             items_sorted = sorted(
                 items,
-                key=lambda x: (
-                    str(Path(x["original_path"]).parent).upper(),
-                    x["original_name"].upper(),
-                ),
+                key=lambda x: x["original_name"].upper(),
             )
 
             for idx, item in enumerate(items_sorted, start=1):
@@ -484,6 +482,17 @@ class MainWindow(QMainWindow):
 
             orig = Path(item["original_path"])
             target = orig.parent / final_name
+
+            if target.exists():
+                try:
+                    same_file = orig.resolve() == target.resolve()
+                except Exception:
+                    same_file = False
+
+                if not same_file:
+                    raise FileExistsError(
+                        f"Ya existe el archivo destino: {target.name}"
+                    )
 
             orig.rename(target)
             self._log(f"  ✓ {item['original_name']} -> {final_name}")
