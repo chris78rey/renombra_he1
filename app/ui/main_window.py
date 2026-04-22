@@ -304,7 +304,7 @@ class MainWindow(QMainWindow):
             """
         )
 
-    def log(self, text: str):
+    def _log(self, text: str):
         self.log.append(text)
 
     # ── Acciones ───────────────────────────────────────────
@@ -342,8 +342,8 @@ class MainWindow(QMainWindow):
         self.status_label.setText(
             "Procesando..." if dry_run else "Renombrando..."
         )
-        self.log("-" * 50)
-        self.log(
+        self._log("-" * 50)
+        self._log(
             f"Inicio: {'simulación' if dry_run else 'aplicación'}"
             f" en {self.folder}"
         )
@@ -364,7 +364,7 @@ class MainWindow(QMainWindow):
         self._populate_table()
         ok = sum(1 for r in results if "ORACLE" in r["status"] or "HARDCODE" in r["status"])
         self.status_label.setText(f"{len(results)} archivos evaluados, {ok} con coincidencia Oracle/hardcode")
-        self.log(f"Completado: {len(results)} archivos")
+        self._log(f"Completado: {len(results)} archivos")
         self.btn_simulate.setEnabled(True)
         self.btn_apply.setEnabled(True)
         self.thread = None
@@ -372,7 +372,7 @@ class MainWindow(QMainWindow):
 
     def _on_failed(self, msg: str):
         self.status_label.setText("Error")
-        self.log(f"ERROR: {msg}")
+        self._log(f"ERROR: {msg}")
         QMessageBox.critical(self, "Error", msg)
         self.btn_simulate.setEnabled(True)
         self.btn_apply.setEnabled(True)
