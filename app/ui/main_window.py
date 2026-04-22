@@ -377,9 +377,8 @@ class MainWindow(QMainWindow):
         self._load_rules_on_start()
 
     def _build_menu(self):
-        help_menu = self.menuBar().addMenu("Ayuda")
-        credits_action = help_menu.addAction("Autores")
-        credits_action.triggered.connect(self.show_credits)
+        help_menu = self.menuBar().addMenu("Autores")
+        help_menu.addAction("Ver autores").triggered.connect(self.show_credits)
 
     def _build_minimal_ui(self):
         central = QWidget()
