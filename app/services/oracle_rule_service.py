@@ -138,12 +138,7 @@ def _calculate_similarity(filename: str, pattern: str) -> float:
     return _jaro_winkler_similarity(a, b)
 
 
-# ─── Keywords hardcodeados (fallback legacy) ───────────────
-_HARDCODED_KEYWORDS = {
-    "PI.pdf":  ["PLANILLA"],
-    "ORS.pdf": ["OTROS"],
-    "002.pdf": ["NOTAS DE EVOLUCION"],
-}
+
 
 
 # ─── Fetch desde Oracle ───────────────────────────────────
@@ -200,12 +195,11 @@ def resolve_pdf_name_from_rules(
     rules: List[OraclePdfRule],
 ) -> Tuple[Optional[str], str]:
     """
-    Orden de evaluación:
-      0. Match exacto por nombre (case-insensitive) ← nuevo
+    Orden de evaluación (Oracle único):
+      0. Match exacto por nombre (case-insensitive)
       1. REGLA_LEE_DOCUMENTO (contenido del PDF)
-      2. REGLA_SIMILARIDAD (similitud Jaro-Winkler ≥ 0.90)
-      3. Keywords hardcodeados legacy
-      4. Sin coincidencia
+      2. REGLA_SIMILARIDAD (Jaro-Winkler ≥ 0.90, patrones ≥ 3 chars)
+      3. Sin coincidencia → no se renombra
     """
     norm_text_cmp = _normalize_compact(pdf_text)
     name_cmp = _normalize_compact(_clean_noise(original_filename))
@@ -216,11 +210,7 @@ def resolve_pdf_name_from_rules(
         if rule_cmp and rule_cmp == name_cmp:
             return rule.nombre_pdf, f"EXACTO_NOMBRE:{rule.nombre_pdf}"
 
-    # PRIORIDAD 1: keywords hardcodeados legacy
-    for rule in rules:
-        for kw in _HARDCODED_KEYWORDS.get(rule.nombre_pdf, []):
-            if _normalize_compact(kw) in name_cmp:
-                return rule.nombre_pdf, f"keyword_duro:{kw}"
+
 
     # PRIORIDAD 2: contenido del PDF
     for rule in rules:

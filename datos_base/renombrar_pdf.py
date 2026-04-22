@@ -190,14 +190,17 @@ def fetch_rules() -> list[OraclePdfRule]:
 
 
 # ─── Resolución ────────────────────────────────────────────
-_HARDCODED = {
-    "PI.pdf":  ["PLANILLA"],
-    "ORS.pdf": ["OTROS"],
-    "002.pdf": ["NOTAS DE EVOLUCION"],
-}
+
 
 
 def resolve(filename: str, pdf_text: str, rules: list[OraclePdfRule]):
+    """
+    Oracle único:
+      0. Match exacto por nombre (case-insensitive)
+      1. REGLA_LEE_DOCUMENTO (contenido del PDF)
+      2. REGLA_SIMILARIDAD (Jaro-Winkler ≥ 0.90, patrones ≥ 3 chars)
+      3. Sin coincidencia → no se renombra
+    """
     name_cmp = _norm_cmp(_clean_noise(filename))
 
     # 0) Match exacto por nombre (case-insensitive)
@@ -206,11 +209,7 @@ def resolve(filename: str, pdf_text: str, rules: list[OraclePdfRule]):
         if rule_cmp and rule_cmp == name_cmp:
             return rule.nombre_pdf, f"EXACTO_NOMBRE:{rule.nombre_pdf}"
 
-    # 1) Keywords hardcodeados legacy
-    for rule in rules:
-        for kw in _HARDCODED.get(rule.nombre_pdf, []):
-            if _norm_cmp(kw) in name_cmp:
-                return rule.nombre_pdf, f"KEYWORD_DURO:{kw}"
+
 
     # 2) Contenido del PDF
     text_cmp = _norm_cmp(pdf_text)
