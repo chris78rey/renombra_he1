@@ -15,7 +15,15 @@ class PdfScanner:
         self.max_chars = int(config["pdf"].get("max_chars", 50000))
 
     def scan_folder(self, folder: str) -> List[PdfCandidate]:
-        pdfs = sorted(Path(folder).rglob("*.pdf"))
+        base = Path(folder)
+
+        # Detecta .pdf, .PDF, .Pdf, etc.
+        pdfs = sorted(
+            path
+            for path in base.rglob("*")
+            if path.is_file() and path.suffix.lower() == ".pdf"
+        )
+
         return [self._read_pdf(path) for path in pdfs]
 
     def _read_pdf(self, path: Path) -> PdfCandidate:
