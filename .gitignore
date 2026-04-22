@@ -5,6 +5,7 @@ __pycache__/
 dist/
 build/
 build_artifacts/
+runtime/
 *.egg
 
 # Virtualenv

@@ -4,7 +4,7 @@
 #define MyAppExeName "RenombradorPDFHospitalario.exe"
 
 [Setup]
-AppId={{B950D7E2-4F7C-4781-8F2B-1C5F4674F001}
+AppId={{B950D7E2-4F7C-4781-8F2B-1C5F4674F001}}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
