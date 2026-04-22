@@ -1,0 +1,206 @@
+ Explicación Completa: Conexión a Oracle en este Proyecto
+
+ ### Arquitectura General
+
+ Este proyecto usa JDBC (Java Database Connectivity) para conectarse a Oracle, a diferencia de conectores Python
+ nativos como cx_Oracle o oracledb. Esto permite compatibilidad con bases de datos Oracle más antiguas (como
+ Oracle 11g R2 RAC).
+
+ ────────────────────────────────────────────────────────────────────────────────
+
+ ### 1. Dependencias Requeridas
+
+ ```bash
+   # requirements.txt
+   jaydebeapi>=1.2,<2    # Bridge Python → Java JDBC
+   JPype1>=1.5,<2        # Permite invocar código Java desde Python
+ ```
+
+ ┌────────────┬───────────────────────────────────────────────────┐
+ │ Paquete    │ Propósito                                         │
+ ├────────────┼───────────────────────────────────────────────────┤
+ │ jaydebeapi │ Bridge que permite a Python conectarse via JDBC   │
+ ├────────────┼───────────────────────────────────────────────────┤
+ │ JPype1     │ Motor que carga la JVM y permite usar clases Java │
+ └────────────┴───────────────────────────────────────────────────┘
+
+ ────────────────────────────────────────────────────────────────────────────────
+
+ ### 2. Archivo JAR de Oracle (Driver JDBC)
+
+ Necesitas el driver JDBC oficial de Oracle:
+
+ ```
+   jdbc/ojdbc8.jar   ← Debe existir en esta carpeta
+ ```
+
+ Este archivo ojdbc8.jar es el driver JDBC oficial de Oracle que se comunica con la base de datos.
+
+ ────────────────────────────────────────────────────────────────────────────────
+
+ ### 3. Configuración (.env)
+
+ ```bash
+   # Credenciales
+   ORACLE_USER=DIGITALIZACION
+   ORACLE_PASSWORD=DIGITALIZACION
+
+   # Ubicación del driver JAR
+   ORACLE_JDBC_JAR=/ruta/al/proyecto/jdbc/ojdbc8.jar
+
+   # Targets Oracle (formato: host:puerto:SID)
+   # Puede ser uno solo o varios separados por coma (failover)
+   ORACLE_TARGETS=172.16.60.21:1521:prdsgh2
+
+   # Esquema y tabla
+   ORACLE_OWNER=DIGITALIZACION
+   ORACLE_TABLE=DIGITALIZACION
+
+   # Workaround timezone para Oracle JDBC
+   JAVA_TOOL_OPTIONS="-Doracle.jdbc.timezoneAsRegion=false -Duser.timezone=UTC"
+ ```
+
+ ────────────────────────────────────────────────────────────────────────────────
+
+ ### 4. URL de Conexión JDBC
+
+ En oracle_client.py se genera la URL de conexión:
+
+ ```python
+   def _jdbc_url(host: str, port: int, sid: str) -> str:
+       return f"jdbc:oracle:thin:@{host}:{port}:{sid}"
+ ```
+
+ Formato final:
+
+ ```
+   jdbc:oracle:thin:@172.16.60.21:1521:prdsgh2
+ ```
+
+ ┌──────────────────┬───────────────────────────────────────────────────┐
+ │ Parte            │ Significado                                       │
+ ├──────────────────┼───────────────────────────────────────────────────┤
+ │ jdbc:oracle:thin │ Driver thin de Oracle (no necesita Oracle Client) │
+ ├──────────────────┼───────────────────────────────────────────────────┤
+ │ @172.16.60.21    │ Host del RAC                                      │
+ ├──────────────────┼───────────────────────────────────────────────────┤
+ │ :1521            │ Puerto listener                                   │
+ ├──────────────────┼───────────────────────────────────────────────────┤
+ │ :prdsgh2         │ SID de la base de datos                           │
+ └──────────────────┴───────────────────────────────────────────────────┘
+
+ ────────────────────────────────────────────────────────────────────────────────
+
+ ### 5. Conexión Real (Failover Automático)
+
+ ```python
+   def connect_with_failover():
+       # 1. Valida credenciales
+       if not Settings.ORACLE_USER or not Settings.ORACLE_PASSWORD:
+           raise RuntimeError("Faltan ORACLE_USER y ORACLE_PASSWORD")
+
+       # 2. Valida que exista el JAR
+       jar = Path(Settings.ORACLE_JDBC_JAR).expanduser().resolve()
+       if not jar.exists():
+           raise RuntimeError(f"No existe el jar Oracle: {jar}")
+
+       # 3. Parsea targets (soporta múltiples separados por coma)
+       targets: list[tuple[str, int, str]] = []
+       for item in raw_targets.split(","):
+           targets.append(_parse_target(item))  # "host:port:sid"
+
+       # 4. Intenta conectar a cada target por orden
+       driver = "oracle.jdbc.OracleDriver"
+       for host, port, sid in targets:
+           url = _jdbc_url(host, port, sid)
+           try:
+               conn = jaydebeapi.connect(
+                   "oracle.jdbc.OracleDriver",   # Driver Java
+                   url,                          # URL JDBC
+                   [Settings.ORACLE_USER, Settings.ORACLE_PASSWORD],  # Credenciales
+                   jars=[str(jar)],              # Ubicación del JAR
+               )
+               return conn  # Primera conexión exitosa → return
+           except Exception as exc:
+               continue     # Falló → intenta siguiente target
+
+       # 5. Ninguno funcionó
+       raise RuntimeError(f"No se pudo conectar a Oracle. Último error: {last_exc}")
+ ```
+
+ ────────────────────────────────────────────────────────────────────────────────
+
+ ### 6. Ejemplo de Uso en Queries
+
+ ```python
+   def _fetch_items(where_clause: str, params: list[object]) -> list[FolderItem]:
+       # Obtiene conexión (con failover automático)
+       conn = connect_with_failover()
+       try:
+           cur = conn.cursor()
+           sql = f"""
+               SELECT DISTINCT
+                      DIG_ID_TRAMITE,
+                      DIG_TRAMITE,
+                      TRIM(NVL(DIG_ANIO, '')) AS DIG_ANIO,
+                      ...
+                 FROM {Settings.ORACLE_OWNER}.{Settings.ORACLE_TABLE}
+                WHERE {where_clause}
+           """
+           cur.execute(sql, params)  # Parámetros seguros (evita SQL injection)
+           rows = cur.fetchall()
+           return rows
+       finally:
+           conn.close()  # Siempre cerrar
+ ```
+
+ ────────────────────────────────────────────────────────────────────────────────
+
+ ### 7. Diagnósticos
+
+ Existe una función para verificar conectividad sin hacer queries:
+
+ ```python
+   def oracle_diagnostics() -> dict:
+       # Verifica:
+       # - Existencia del JAR
+       # - Conexión a cada target (con tiempo de respuesta)
+ ```
+
+ Útil para debugging o health checks.
+
+ ────────────────────────────────────────────────────────────────────────────────
+
+ ### 8. Resumen del Flujo
+
+ ```
+   .app (Flask)
+     ↓
+   config.py (Settings) ← carga .env
+     ↓
+   oracle_client.py
+     ↓
+   jaydebeapi.connect()
+     ↓
+   JPype1 (JVM) ← carga ojdbc8.jar
+     ↓
+   Oracle RAC 172.16.60.21:1521:prdsgh2
+ ```
+
+ ────────────────────────────────────────────────────────────────────────────────
+
+ ### 9. Ventajas de esta Arquitectura
+
+ ┌────────────────────┬─────────────────────────────────────────────────────────────────┐
+ │ Aspecto            │ Beneficio                                                       │
+ ├────────────────────┼─────────────────────────────────────────────────────────────────┤
+ │ JDBC puro          │ Compatible con Oracle 11g R2 sin instalar Oracle Instant Client │
+ ├────────────────────┼─────────────────────────────────────────────────────────────────┤
+ │ Failover           │ Si un nodo RAC cae, intenta el siguiente automáticamente        │
+ ├────────────────────┼─────────────────────────────────────────────────────────────────┤
+ │ Parámetros seguros │ Usa ? placeholders → previene SQL injection                     │
+ ├────────────────────┼─────────────────────────────────────────────────────────────────┤
+ │ Lazy loading       │ JPype1 solo carga la JVM cuando se necesita                     │
+ └────────────────────┴─────────────────────────────────────────────────────────────────┘
+
+ ¿Necesitas que profundice en algún punto específico?
