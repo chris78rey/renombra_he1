@@ -194,29 +194,51 @@ def resolve_pdf_name_from_rules(
       2. REGLA_SIMILARIDAD (similitud Jaro-Winkler, umbral 0.85)
       3. Sin coincidencia
     """
+def resolve_pdf_name_from_rules(
+    original_filename: str,
+    pdf_text: str,
+    rules: List[OraclePdfRule],
+) -> Tuple[Optional[str], str]:
+    """
+    Orden de evaluación:
+      0. Match exacto por nombre (case-insensitive) ← nuevo
+      1. REGLA_LEE_DOCUMENTO (contenido del PDF)
+      2. REGLA_SIMILARIDAD (similitud Jaro-Winkler ≥ 0.90)
+      3. Keywords hardcodeados legacy
+      4. Sin coincidencia
+    """
     norm_text_cmp = _normalize_compact(pdf_text)
     name_cmp = _normalize_compact(_clean_noise(original_filename))
 
-    # PRIORIDAD 0: keywords hardcodeados
+    # PRIORIDAD 0: match exacto del nombre (case-insensitive)
+    for rule in rules:
+        rule_cmp = _normalize_compact(_clean_noise(rule.nombre_pdf))
+        if rule_cmp and rule_cmp == name_cmp:
+            return rule.nombre_pdf, f"EXACTO_NOMBRE:{rule.nombre_pdf}"
+
+    # PRIORIDAD 1: keywords hardcodeados legacy
     for rule in rules:
         for kw in _HARDCODED_KEYWORDS.get(rule.nombre_pdf, []):
             if _normalize_compact(kw) in name_cmp:
                 return rule.nombre_pdf, f"keyword_duro:{kw}"
 
-    # PRIORIDAD 1: contenido del PDF
+    # PRIORIDAD 2: contenido del PDF
     for rule in rules:
         for pattern in _split_patterns(rule.regla_lee_documento):
             pattern_cmp = _normalize_compact(pattern)
             if pattern_cmp and pattern_cmp in norm_text_cmp:
                 return rule.nombre_pdf, f"ORACLE_CONTENIDO:{pattern}"
 
-    # PRIORIDAD 2: similitud difusa del nombre
+    # PRIORIDAD 3: similitud difusa del nombre (Jaro-Winkler)
     best_score = -1.0
     best_rule: Optional[OraclePdfRule] = None
     best_pattern: Optional[str] = None
 
     for rule in rules:
         for pattern in _split_patterns(rule.regla_similaridad):
+            # Ignorar patrones demasiado cortos
+            if len(pattern) < 3:
+                continue
             score = _calculate_similarity(original_filename, pattern)
             if score > best_score:
                 best_score = score
@@ -224,12 +246,10 @@ def resolve_pdf_name_from_rules(
                 best_pattern = pattern
 
     if best_rule is not None and best_score >= SIMILARITY_THRESHOLD:
-        # Rechazar patrones Oracle demasiado cortos (< 3 chars)
-        if best_pattern and len(best_pattern) < 3:
-            return None, f"PATRON_TOO_SHORT:{best_pattern}|score={best_score:.4f}"
         return (
             best_rule.nombre_pdf,
             f"ORACLE_NOMBRE:{best_pattern}|score={best_score:.4f}|umbral={SIMILARITY_THRESHOLD:.4f}",
         )
 
     return None, f"SIN_COINCIDENCIA|max_score={best_score:.4f}"
+
