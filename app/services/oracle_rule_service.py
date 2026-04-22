@@ -8,7 +8,7 @@ from typing import List, Optional, Tuple
 from app.services.oracle_client import connect_with_failover
 
 RULE_DELIMITER = "|"
-SIMILARITY_THRESHOLD = 0.90
+SIMILARITY_THRESHOLD = 0.75
 SIMILARITY_ALGORITHM = "JARO_WINKLER"
 
 
@@ -186,7 +186,7 @@ def resolve_pdf_name_from_rules(
     Orden de evaluación:
       0. Keywords hardcodeados (compatibilidad legado)
       1. REGLA_LEE_DOCUMENTO (contenido del PDF)
-      2. REGLA_SIMILARIDAD (similitud Jaro-Winkler, umbral 0.85)
+      2. REGLA_SIMILARIDAD (similitud Jaro-Winkler, umbral 0.75)
       3. Sin coincidencia
     """
 def resolve_pdf_name_from_rules(
@@ -198,7 +198,7 @@ def resolve_pdf_name_from_rules(
     Orden de evaluación (Oracle único):
       0. Match exacto por nombre (case-insensitive)
       1. REGLA_LEE_DOCUMENTO (contenido del PDF)
-      2. REGLA_SIMILARIDAD (Jaro-Winkler ≥ 0.90, patrones ≥ 3 chars)
+      2. REGLA_SIMILARIDAD (Jaro-Winkler >= 0.75, patrones >= 3 chars)
       3. Sin coincidencia → no se renombra
     """
     norm_text_cmp = _normalize_compact(pdf_text)

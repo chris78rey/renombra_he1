@@ -457,14 +457,20 @@ class MainWindow(QMainWindow):
                 target = orig.parent / new_name
 
                 if target.exists():
-                    seq = idx
-                    while True:
-                        seq += 1
-                        candidate_name = f"{stem}_{seq:02d}{suffix}"
-                        candidate_target = orig.parent / candidate_name
-                        if not candidate_target.exists():
-                            new_name = candidate_name
-                            break
+                    try:
+                        same_file = orig.resolve() == target.resolve()
+                    except Exception:
+                        same_file = False
+
+                    if not same_file:
+                        seq = idx
+                        while True:
+                            seq += 1
+                            candidate_name = f"{stem}_{seq:02d}{suffix}"
+                            candidate_target = orig.parent / candidate_name
+                            if not candidate_target.exists():
+                                new_name = candidate_name
+                                break
 
                 self._rename_file(item, new_name)
                 renamed += 1
@@ -493,6 +499,8 @@ class MainWindow(QMainWindow):
                     raise FileExistsError(
                         f"Ya existe el archivo destino: {target.name}"
                     )
+                self._log(f"  = {item['original_name']} ya estaba como {final_name}")
+                return
 
             orig.rename(target)
             self._log(f"  ✓ {item['original_name']} -> {final_name}")
