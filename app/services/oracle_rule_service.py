@@ -8,7 +8,7 @@ from typing import List, Optional, Tuple
 from app.services.oracle_client import connect_with_failover
 
 RULE_DELIMITER = "|"
-SIMILARITY_THRESHOLD = 0.85
+SIMILARITY_THRESHOLD = 0.90
 SIMILARITY_ALGORITHM = "JARO_WINKLER"
 
 
@@ -224,6 +224,9 @@ def resolve_pdf_name_from_rules(
                 best_pattern = pattern
 
     if best_rule is not None and best_score >= SIMILARITY_THRESHOLD:
+        # Rechazar patrones Oracle demasiado cortos (< 3 chars)
+        if best_pattern and len(best_pattern) < 3:
+            return None, f"PATRON_TOO_SHORT:{best_pattern}|score={best_score:.4f}"
         return (
             best_rule.nombre_pdf,
             f"ORACLE_NOMBRE:{best_pattern}|score={best_score:.4f}|umbral={SIMILARITY_THRESHOLD:.4f}",
