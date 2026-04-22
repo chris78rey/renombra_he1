@@ -151,10 +151,10 @@ class RenameWorker(QObject):
                 results.append({
                     "original_name": candidate.original_name,
                     "original_path": str(candidate.original_path),
-                    "suggested_final_name": target or "",
+                    "suggested_final_name": (target or "").lower().replace(".PDF", ".pdf"),
                     "target_path": (
-                        str(candidate.original_path.parent / target)
-                        if target and target != candidate.original_name
+                        str(candidate.original_path.parent / (target or "").lower().replace(".PDF", ".pdf"))
+                        if target and target.lower().replace(".PDF", ".pdf") != candidate.original_name
                         else ""
                     ),
                     "status": reason,
@@ -416,6 +416,9 @@ class MainWindow(QMainWindow):
 
     def _rename_file(self, item: dict, final_name: str):
         try:
+            # Normalizar extensión siempre a .pdf minúscula
+            stem = Path(final_name).stem
+            final_name = stem + ".pdf"
             orig = Path(item["original_path"])
             target = orig.parent / final_name
             orig.rename(target)
