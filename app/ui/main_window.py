@@ -399,32 +399,77 @@ class MainWindow(QMainWindow):
         self.worker = None
 
     def _apply_renames_with_dedup(self, results: list):
-        # Solo archivos que tienen destino válido y no son ya correctos
+        """
+        Regla funcional:
+        - Un solo archivo que resuelve a PI.pdf queda como PI.pdf.
+        - Solo se usa _01, _02, ... si varios archivos del mismo lote
+          resuelven al mismo nombre final.
+        - No se sobrescriben archivos existentes.
+        """
         candidates = [
             r for r in results
-            if r.get("suggested_final_name") and r["original_name"] != r["suggested_final_name"]
+            if r.get("suggested_final_name")
+            and r["original_name"] != r["suggested_final_name"]
         ]
 
-        # Agrupar por destino propuesto
         groups: dict[str, list] = {}
         for item in candidates:
-            dest = item["suggested_final_name"]
+            dest = (item["suggested_final_name"] or "").strip()
+            if not dest:
+                continue
             groups.setdefault(dest, []).append(item)
 
         renamed = 0
         for dest, items in sorted(groups.items()):
+            suffix = Path(dest).suffix
+            stem = Path(dest).stem
+
             if len(items) == 1:
-                # Un solo archivo → nombre directo
-                self._rename_file(items[0], dest)
+                item = items[0]
+                orig = Path(item["original_path"])
+                target = orig.parent / dest
+
+                if target.exists():
+                    try:
+                        same_file = orig.resolve() == target.resolve()
+                    except Exception:
+                        same_file = False
+
+                    if not same_file:
+                        self._log(
+                            f"  COLISION: {item['original_name']} no se renombro porque ya existe {dest}"
+                        )
+                        continue
+
+                self._rename_file(item, dest)
                 renamed += 1
-            else:
-                # Múltiples archivos → _01, _02, ... (conserva suffix original)
-                for idx, item in enumerate(items, start=1):
-                    suffix = Path(dest).suffix
-                    stem = Path(dest).stem
-                    new_name = f"{stem}_{idx:02d}{suffix}"
-                    self._rename_file(item, new_name)
-                    renamed += 1
+                continue
+
+            items_sorted = sorted(
+                items,
+                key=lambda x: (
+                    str(Path(x["original_path"]).parent).upper(),
+                    x["original_name"].upper(),
+                ),
+            )
+
+            for idx, item in enumerate(items_sorted, start=1):
+                new_name = f"{stem}_{idx:02d}{suffix}"
+                orig = Path(item["original_path"])
+                target = orig.parent / new_name
+
+                if target.exists():
+                    seq = idx
+                    while True:
+                        seq += 1
+                        candidate_name = f"{stem}_{seq:02d}{suffix}"
+                        candidate_target = orig.parent / candidate_name
+                        if not candidate_target.exists():
+                            new_name = candidate_name
+                            break
+
+                self._rename_file(item, new_name)
+                renamed += 1
 
         self._log(f"Total renombrados: {renamed}")
 
