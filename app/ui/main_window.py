@@ -363,14 +363,15 @@ class MainWindow(QMainWindow):
     def _on_finished(self, results: list):
         self.results = results
         if not self._current_dry_run:
-            self._apply_renames(results)
-        self._populate_table()
+            self._apply_renames_with_dedup(results)
+        else:
+            self._populate_table()
+            self._log(f"Simulación completada: {len(results)} archivos")
         ok = sum(
             1 for r in results
-            if any(x in r["status"] for x in ["EXACTO", "ORACLE", "KEYWORD"])
+            if any(x in r["status"] for x in ["EXACTO", "ORACLE"])
         )
         self.status_label.setText(f"{len(results)} archivos evaluados, {ok} con coincidencia")
-        self._log(f"Completado: {len(results)} archivos")
         self.btn_simulate.setEnabled(True)
         self.btn_apply.setEnabled(True)
         self.thread = None
@@ -385,24 +386,42 @@ class MainWindow(QMainWindow):
         self.thread = None
         self.worker = None
 
-    def _apply_renames(self, results: list):
+    def _apply_renames_with_dedup(self, results: list):
+        # Solo archivos que tienen destino válido y no son ya correctos
+        candidates = [
+            r for r in results
+            if r.get("suggested_final_name") and r["original_name"] != r["suggested_final_name"]
+        ]
+
+        # Agrupar por destino propuesto
+        groups: dict[str, list] = {}
+        for item in candidates:
+            dest = item["suggested_final_name"]
+            groups.setdefault(dest, []).append(item)
+
         renamed = 0
-        for item in results:
-            if not item.get("target_path"):
-                continue
-            if item["original_path"] == item["target_path"]:
-                continue
-            target = Path(item["target_path"])
-            if target.exists():
-                self._log(f"  ⚠ Colisión: {item['original_name']} -> {target.name}")
-                continue
-            try:
-                Path(item["original_path"]).rename(target)
+        for dest, items in sorted(groups.items()):
+            if len(items) == 1:
+                # Un solo archivo → nombre directo
+                self._rename_file(items[0], dest)
                 renamed += 1
-                self._log(f"  ✓ Renombrado: {item['original_name']} -> {target.name}")
-            except Exception as exc:
-                self._log(f"  X Error: {item['original_name']}: {exc}")
+            else:
+                # Múltiples archivos → _01, _02, ...
+                for idx, item in enumerate(items, start=1):
+                    new_name = f"{Path(dest).stem}_{idx:02d}{Path(dest).suffix}"
+                    self._rename_file(item, new_name)
+                    renamed += 1
+
         self._log(f"Total renombrados: {renamed}")
+
+    def _rename_file(self, item: dict, final_name: str):
+        try:
+            orig = Path(item["original_path"])
+            target = orig.parent / final_name
+            orig.rename(target)
+            self._log(f"  ✓ {item['original_name']} -> {final_name}")
+        except Exception as exc:
+            self._log(f"  X {item['original_name']}: {exc}")
 
     def _populate_table(self):
         self.table.setRowCount(len(self.results))
