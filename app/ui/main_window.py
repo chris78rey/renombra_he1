@@ -339,6 +339,7 @@ class MainWindow(QMainWindow):
 
         self.btn_simulate.setEnabled(False)
         self.btn_apply.setEnabled(False)
+        self._current_dry_run = dry_run
         self.status_label.setText(
             "Procesando..." if dry_run else "Renombrando..."
         )
@@ -361,9 +362,14 @@ class MainWindow(QMainWindow):
 
     def _on_finished(self, results: list):
         self.results = results
+        if not self._current_dry_run:
+            self._apply_renames(results)
         self._populate_table()
-        ok = sum(1 for r in results if "ORACLE" in r["status"] or "HARDCODE" in r["status"])
-        self.status_label.setText(f"{len(results)} archivos evaluados, {ok} con coincidencia Oracle/hardcode")
+        ok = sum(
+            1 for r in results
+            if any(x in r["status"] for x in ["EXACTO", "ORACLE", "KEYWORD"])
+        )
+        self.status_label.setText(f"{len(results)} archivos evaluados, {ok} con coincidencia")
         self._log(f"Completado: {len(results)} archivos")
         self.btn_simulate.setEnabled(True)
         self.btn_apply.setEnabled(True)
@@ -378,6 +384,25 @@ class MainWindow(QMainWindow):
         self.btn_apply.setEnabled(True)
         self.thread = None
         self.worker = None
+
+    def _apply_renames(self, results: list):
+        renamed = 0
+        for item in results:
+            if not item.get("target_path"):
+                continue
+            if item["original_path"] == item["target_path"]:
+                continue
+            target = Path(item["target_path"])
+            if target.exists():
+                self._log(f"  ⚠ Colisión: {item['original_name']} -> {target.name}")
+                continue
+            try:
+                Path(item["original_path"]).rename(target)
+                renamed += 1
+                self._log(f"  ✓ Renombrado: {item['original_name']} -> {target.name}")
+            except Exception as exc:
+                self._log(f"  X Error: {item['original_name']}: {exc}")
+        self._log(f"Total renombrados: {renamed}")
 
     def _populate_table(self):
         self.table.setRowCount(len(self.results))
