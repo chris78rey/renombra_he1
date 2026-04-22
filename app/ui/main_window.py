@@ -151,10 +151,11 @@ class RenameWorker(QObject):
                 results.append({
                     "original_name": candidate.original_name,
                     "original_path": str(candidate.original_path),
-                    "suggested_final_name": (target or "").lower().replace(".PDF", ".pdf"),
+                    # Respetar EXACTAMENTE el case entregado por Oracle
+                    "suggested_final_name": (target or "").strip(),
                     "target_path": (
-                        str(candidate.original_path.parent / (target or "").lower().replace(".PDF", ".pdf"))
-                        if target and target.lower().replace(".PDF", ".pdf") != candidate.original_name
+                        str(candidate.original_path.parent / (target or "").strip())
+                        if target and target.strip() != candidate.original_name
                         else ""
                     ),
                     "status": reason,
@@ -406,9 +407,11 @@ class MainWindow(QMainWindow):
                 self._rename_file(items[0], dest)
                 renamed += 1
             else:
-                # Múltiples archivos → _01, _02, ...
+                # Múltiples archivos → _01, _02, ... (conserva suffix original)
                 for idx, item in enumerate(items, start=1):
-                    new_name = f"{Path(dest).stem}_{idx:02d}{Path(dest).suffix}"
+                    suffix = Path(dest).suffix
+                    stem = Path(dest).stem
+                    new_name = f"{stem}_{idx:02d}{suffix}"
                     self._rename_file(item, new_name)
                     renamed += 1
 
@@ -416,11 +419,16 @@ class MainWindow(QMainWindow):
 
     def _rename_file(self, item: dict, final_name: str):
         try:
-            # Normalizar extensión siempre a .pdf minúscula
-            stem = Path(final_name).stem
-            final_name = stem + ".pdf"
+            # Respetar EXACTAMENTE el nombre entregado por Oracle
+            # No forzar .pdf en minúscula ni alterar mayúsculas/minúsculas
+            final_name = (final_name or "").strip()
+
+            if not final_name:
+                raise ValueError("Nombre final vacío")
+
             orig = Path(item["original_path"])
             target = orig.parent / final_name
+
             orig.rename(target)
             self._log(f"  ✓ {item['original_name']} -> {final_name}")
         except Exception as exc:
