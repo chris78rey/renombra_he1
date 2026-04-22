@@ -255,8 +255,9 @@ def extract_text(path: str) -> str:
 
 
 # ─── Main ────────────────────────────────────────────────
-def main():
-    base_dir = os.getcwd()
+def main(base_dir: str | None = None):
+    if base_dir is None:
+        base_dir = os.getcwd()
     try:
         rules = fetch_rules()
     except Exception as exc:
