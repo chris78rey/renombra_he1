@@ -261,8 +261,8 @@ class EditableCatalogDialog(QDialog):
 class CreditsDialog(QDialog):
     def __init__(self, config: dict, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Creditos")
-        self.resize(620, 360)
+        self.setWindowTitle("Autores")
+        self.resize(760, 520)
 
         credits = config.get("credits", {})
         app_name = config.get("app_name", "Renombrador PDF")
@@ -270,35 +270,84 @@ class CreditsDialog(QDialog):
         authors = credits.get("authors") or [credits.get("author", "Equipo de implementacion")]
         year = credits.get("year", "2026")
         organization = credits.get("organization", "")
-        description = credits.get("description", "Herramienta para analizar, auditar y renombrar PDFs hospitalarios.")
+        description = credits.get(
+            "description",
+            "Herramienta para analizar, auditar y renombrar PDFs hospitalarios.",
+        )
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
+
         title = QLabel(app_name)
         title.setObjectName("titleLabel")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
 
-        body = QTextEdit()
-        body.setReadOnly(True)
-        author_lines = "\n".join(f"- {author}" for author in authors)
-        body.setText(
-            "\n".join(
-                [
-                    f"Version: {version}",
-                    f"Anio: {year}",
-                    f"Organizacion: {organization}" if organization else "",
-                    "",
-                    "Autores:",
-                    author_lines,
-                    "",
-                    description,
-                ]
-            ).strip()
+        subtitle = QLabel(f"Versión {version} · Año {year}")
+        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        subtitle.setStyleSheet(
+            "font-size: 16px; color: #475569; font-weight: 600; padding-bottom: 8px;"
         )
-        layout.addWidget(body, stretch=1)
+        layout.addWidget(subtitle)
+
+        if organization:
+            org_label = QLabel(organization)
+            org_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            org_label.setStyleSheet(
+                "font-size: 15px; color: #0f172a; font-weight: 700; padding: 4px 0 12px 0;"
+            )
+            layout.addWidget(org_label)
+
+        authors_title = QLabel("AUTORES")
+        authors_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        authors_title.setStyleSheet(
+            "background-color: #1d4ed8; color: white; font-size: 24px; "
+            "font-weight: 900; padding: 14px; border-radius: 14px; letter-spacing: 1px;"
+        )
+        layout.addWidget(authors_title)
+
+        authors_box = QFrame()
+        authors_box.setStyleSheet(
+            "background-color: #eff6ff; border: 3px solid #2563eb; border-radius: 18px;"
+        )
+        authors_layout = QVBoxLayout(authors_box)
+        authors_layout.setContentsMargins(20, 20, 20, 20)
+        authors_layout.setSpacing(12)
+
+        for author in authors:
+            author_label = QLabel(author)
+            author_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            author_label.setStyleSheet(
+                "font-size: 22px; font-weight: 800; color: #0f172a; padding: 12px; "
+                "background-color: white; border-radius: 12px; border: 1px solid #bfdbfe;"
+            )
+            authors_layout.addWidget(author_label)
+
+        layout.addWidget(authors_box)
+
+        desc_title = QLabel("Descripción")
+        desc_title.setStyleSheet(
+            "font-size: 18px; font-weight: 800; color: #0f172a; margin-top: 8px;"
+        )
+        layout.addWidget(desc_title)
+
+        desc_box = QTextEdit()
+        desc_box.setReadOnly(True)
+        desc_box.setText(description)
+        desc_box.setStyleSheet(
+            "font-size: 15px; background-color: #ffffff; border: 1px solid #cbd5e1; "
+            "border-radius: 12px; padding: 10px;"
+        )
+        layout.addWidget(desc_box, stretch=1)
 
         btn_close = QPushButton("Cerrar")
         btn_close.clicked.connect(self.accept)
-        btn_close.setMinimumHeight(48)
+        btn_close.setMinimumHeight(52)
+        btn_close.setStyleSheet(
+            "font-size: 16px; font-weight: 800; background-color: #1d4ed8; color: white; "
+            "border-radius: 12px; padding: 10px 18px;"
+        )
         layout.addWidget(btn_close)
 
 
@@ -328,22 +377,8 @@ class MainWindow(QMainWindow):
         self._load_rules_on_start()
 
     def _build_menu(self):
-        rules_menu = self.menuBar().addMenu("Reglas")
-
-        edit_rules_action = rules_menu.addAction("Editar reglas")
-        edit_rules_action.triggered.connect(self.show_catalog)
-
-        export_rules_action = rules_menu.addAction("Exportar reglas CSV")
-        export_rules_action.triggered.connect(self.export_rules_csv)
-
-        import_rules_action = rules_menu.addAction("Importar reglas CSV")
-        import_rules_action.triggered.connect(self.import_rules_csv)
-
-        reload_rules_action = rules_menu.addAction("Recargar catalogo")
-        reload_rules_action.triggered.connect(self.load_rules)
-
         help_menu = self.menuBar().addMenu("Ayuda")
-        credits_action = help_menu.addAction("Creditos")
+        credits_action = help_menu.addAction("Autores")
         credits_action.triggered.connect(self.show_credits)
 
     def _build_minimal_ui(self):
