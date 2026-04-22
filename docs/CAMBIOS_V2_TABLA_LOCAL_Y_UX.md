@@ -1,32 +1,47 @@
+# CAMBIO FINAL - Oracle como fuente de reglas
 
-# CAMBIOS V2 - tabla local dentro del proyecto + UX amigable
+## Estado final
 
-## Qué cambia
-1. Se elimina la dependencia operativa del Excel.
-2. La fuente de verdad pasa a una base local SQLite dentro del proyecto.
-3. La tabla local se siembra automáticamente desde `datos_base/nombres_validos.sql`.
-4. La interfaz usa botones grandes, tipografía más amplia y flujo lineal visible.
+- SQLite queda fuera del flujo de reglas.
+- El cliente ya no usa catálogo local para renombrar.
+- La fuente de verdad es Oracle, tabla `PDF_NOMBRES_VALIDOS`.
+- El motor evalúa en este orden:
+  1. `REGLA_LEE_DOCUMENTO` (contenido del PDF)
+  2. `REGLA_SIMILARIDAD` (similitud Jaro-Winkler, umbral 0.85)
+  3. keywords hardcodeados legacy (`PLANILLA`→PI.pdf, `OTROS`→ORS.pdf, `NOTAS DE EVOLUCION`→002.pdf)
+  4. si no hay coincidencia, no se renombra
 
-## Archivos a agregar
-- `app/services/sqlite_rule_service.py`
+## Múltiples patrones por columna
 
-## Archivos a reemplazar
-- `app/ui/main_window.py`
-- `app/main.py`
-- `config/app_config.json`
-- `requirements.txt`
+Se permite usar `|` como delimitador en:
+- `REGLA_SIMILARIDAD`
+- `REGLA_LEE_DOCUMENTO`
 
-## Cómo correr
-```bash
-cd renombrador_pdf_pyqt6
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-python app\main.py
+Ejemplo en Oracle:
+```sql
+UPDATE PDF_NOMBRES_VALIDOS
+   SET REGLA_SIMILARIDAD = 'PLANILLA|PLANILLA INDIVIDUAL|PLANI',
+       REGLA_LEE_DOCUMENTO = 'HOJA DE COBERTURA|COBERTURA IESS'
+ WHERE NOMBRE_PDF = 'PI.pdf';
 ```
 
-## Qué genera en el primer arranque
-- `config/catalogo_reglas.db`
+## UI
 
-## Fuente de datos inicial
-- `datos_base/nombres_validos.sql`
+- Se elimina el menú "Reglas".
+- La interfaz ya no administra reglas locales.
+- Solo queda la opción "Autores" dentro del menú principal.
+
+## Dependencias
+
+```bash
+pip install PyQt6 PyMuPDF jaydebeapi JPype1
+```
+
+## Variables de entorno
+
+```bash
+export ORACLE_USER=DIGITALIZACION
+export ORACLE_PASSWORD=DIGITALIZACION
+export ORACLE_TARGETS=172.16.60.21:1521:prdsgh2
+export ORACLE_JDBC_JAR=jdbc/ojdbc8.jar
+```

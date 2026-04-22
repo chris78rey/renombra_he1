@@ -7,51 +7,9 @@ from typing import List, Optional, Tuple
 
 from app.services.oracle_client import connect_with_failover
 
-# ─── Keywords hardcodeados (comportamiento actual del script) ──
-# Mantienen compatibilidad con reglas fijas que antes estaban queimadas
-_HARDCODED_KEYWORDS = {
-    "PI.pdf":     ["PLANILLA"],
-    "ORS.pdf":    ["OTROS"],
-    "002.pdf":    ["NOTAS DE EVOLUCION"],
-    "053.pdf":    ["053"],
-    "006.pdf":    ["006"],
-    "007.pdf":    ["007"],
-    "017.pdf":    ["PROTOCOLO QUIRURGICO"],
-    "018.pdf":    ["PROTOCOLO ANESTESICO"],
-    "018A.pdf":   ["PROTOCOLO TRANSANESTESICO"],
-    "113.pdf":    ["BITACORA UTI"],
-    "114.pdf":    ["BITACORA NEONATAL"],
-    "115.pdf":    ["BITACORA PEDIATRICA"],
-    "010A.pdf":   ["LABORATORIO PEDIDO"],
-    "010B.pdf":   ["LABORATORIO INFORME"],
-    "012A.pdf":   ["IMAGEN PEDIDO"],
-    "012B.pdf":   ["IMAGEN INFORME"],
-    "033.pdf":    ["ODONTOLOGIA"],
-    "013A.pdf":   ["013A"],
-    "013B.pdf":   ["013B"],
-    "08.pdf":     ["FORMULARIO 08"],
-    "FSCS.pdf":   ["FSCS"],
-    "FSICS.pdf":  ["FSICS"],
-    "FRDCS.pdf":  ["FRDCS"],
-    "ANX2.pdf":   ["ANEXO 2"],
-    "HR.pdf":     ["HISTORIA RADIOLOGICA"],
-    "RHD.pdf":    ["RHD"],
-    "IMT.pdf":    ["IMT"],
-    "CEC.pdf":    ["CEC"],
-    "RAD.pdf":    ["RAD"],
-    "ITS.pdf":    ["ITS"],
-    "RVD.pdf":    ["RVD"],
-    "119.pdf":    ["119"],
-    "PTR.pdf":    ["PTR"],
-    "RTR.pdf":    ["RTR"],
-    "CV.pdf":     ["CODIGO VALIDACION"],
-    "AES.pdf":    ["ACTA ENTREGA"],
-    "CC.pdf":     ["COBERTURA"],
-}
-
-# ─── Configuración hardcodeada ───────────────────────────────
+RULE_DELIMITER = "|"
 SIMILARITY_THRESHOLD = 0.85
-# ─────────────────────────────────────────────────────────────
+SIMILARITY_ALGORITHM = "JARO_WINKLER"
 
 
 @dataclass
@@ -64,6 +22,7 @@ class OraclePdfRule:
     regla_lee_documento: Optional[str]
 
 
+# ─── Normalización ────────────────────────────────────────
 def _normalize_text(value: Optional[str]) -> str:
     if not value:
         return ""
@@ -80,18 +39,26 @@ def _normalize_compact(value: Optional[str]) -> str:
 
 
 def _clean_noise(filename: str) -> str:
-    """Elimina ruido de nombres de archivo para comparación limpia."""
     filename = re.sub(r"\.pdf$", "", filename, flags=re.IGNORECASE)
-    filename = re.sub(
-        r"\bSCAN\b|\bDOC\b|\bDOCUMENTO\b|\bIMG\b|\bIMAGE\b", " ", filename, flags=re.IGNORECASE
-    )
-    filename = re.sub(r"\b\d{1,8}\b", " ", filename)
     filename = re.sub(r"[_\-.]+", " ", filename)
+    filename = re.sub(
+        r"\bSCAN\b|\bDOC\b|\bDOCUMENTO\b|\bIMG\b|\bIMAGE\b",
+        " ",
+        filename,
+        flags=re.IGNORECASE,
+    )
     filename = re.sub(r"\s+", " ", filename).strip()
     return filename
 
 
-# ─── Algoritmos de similitud ─────────────────────────────────
+def _split_patterns(value: Optional[str]) -> List[str]:
+    if not value:
+        return []
+    parts = [item.strip() for item in str(value).split(RULE_DELIMITER)]
+    return [item for item in parts if item]
+
+
+# ─── Similitud difusa ──────────────────────────────────────
 def _jaro_similarity(s1: str, s2: str) -> float:
     if s1 == s2:
         return 1.0
@@ -142,15 +109,44 @@ def _jaro_winkler_similarity(s1: str, s2: str, prefix_scale: float = 0.1) -> flo
     return jaro + (prefix * prefix_scale * (1 - jaro))
 
 
-def _calcular_similitud(nombre_archivo: str, patron_regla: str) -> float:
-    a = _normalize_compact(_clean_noise(nombre_archivo))
-    b = _normalize_compact(patron_regla)
+def _levenshtein_ratio(a: str, b: str) -> float:
+    if not a and not b:
+        return 1.0
+    if not a:
+        return 0.0
+    if not b:
+        return 0.0
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, start=1):
+        curr = [i]
+        for j, cb in enumerate(b, start=1):
+            ins = curr[j - 1] + 1
+            dele = prev[j] + 1
+            sub = prev[j - 1] + (0 if ca == cb else 1)
+            curr.append(min(ins, dele, sub))
+        prev = curr
+    return 1.0 - (prev[-1] / max(len(a), len(b)))
+
+
+def _calculate_similarity(filename: str, pattern: str) -> float:
+    a = _normalize_compact(_clean_noise(filename))
+    b = _normalize_compact(pattern)
     if not a or not b:
         return 0.0
+    if SIMILARITY_ALGORITHM == "LEVENSHTEIN":
+        return _levenshtein_ratio(a, b)
     return _jaro_winkler_similarity(a, b)
 
 
-# ─── Fetch desde Oracle ──────────────────────────────────────
+# ─── Keywords hardcodeados (fallback legacy) ───────────────
+_HARDCODED_KEYWORDS = {
+    "PI.pdf":  ["PLANILLA"],
+    "ORS.pdf": ["OTROS"],
+    "002.pdf": ["NOTAS DE EVOLUCION"],
+}
+
+
+# ─── Fetch desde Oracle ───────────────────────────────────
 def fetch_oracle_pdf_rules() -> List[OraclePdfRule]:
     conn = connect_with_failover()
     try:
@@ -165,7 +161,7 @@ def fetch_oracle_pdf_rules() -> List[OraclePdfRule]:
                 REGLA_SIMILARIDAD,
                 REGLA_LEE_DOCUMENTO
             FROM DIGITALIZACION.PDF_NOMBRES_VALIDOS
-            WHERE ACTIVO = 'S'
+            WHERE UPPER(NVL(ACTIVO, 'S')) = 'S'
             ORDER BY NVL(ORDEN, 999999), NOMBRE_PDF
             """
         )
@@ -185,59 +181,52 @@ def fetch_oracle_pdf_rules() -> List[OraclePdfRule]:
         conn.close()
 
 
-# ─── Resolución ────────────────────────────────────────────────
+# ─── Resolución ────────────────────────────────────────────
 def resolve_pdf_name_from_rules(
     original_filename: str,
     pdf_text: str,
     rules: List[OraclePdfRule],
 ) -> Tuple[Optional[str], str]:
     """
-    Evalúa reglas en orden de prioridad:
-      1. CONTENIDO  → REGLA_LEE_DOCUMENTO (subcadena normalizada)
-      2. SIMILITUD  → REGLA_SIMILARIDAD  (Jaro-Winkler, umbral 0.90)
-
-    Retorna (nombre_destino, motivo) o (None, "sin_coincidencia")
+    Orden de evaluación:
+      0. Keywords hardcodeados (compatibilidad legado)
+      1. REGLA_LEE_DOCUMENTO (contenido del PDF)
+      2. REGLA_SIMILARIDAD (similitud Jaro-Winkler, umbral 0.85)
+      3. Sin coincidencia
     """
-    norm_name = _normalize_text(original_filename)
-    norm_name_cmp = _normalize_compact(original_filename)
-    norm_text = _normalize_text(pdf_text)
     norm_text_cmp = _normalize_compact(pdf_text)
+    name_cmp = _normalize_compact(_clean_noise(original_filename))
 
-    # PRIORIDAD 0: keywords hardcodeados (compatibilidad con script original)
-    name_clean_cmp = _normalize_compact(_clean_noise(original_filename))
+    # PRIORIDAD 0: keywords hardcodeados
     for rule in rules:
         for kw in _HARDCODED_KEYWORDS.get(rule.nombre_pdf, []):
-            if _normalize_compact(kw) in name_clean_cmp:
+            if _normalize_compact(kw) in name_cmp:
                 return rule.nombre_pdf, f"keyword_duro:{kw}"
 
     # PRIORIDAD 1: contenido del PDF
     for rule in rules:
-        token = (rule.regla_lee_documento or "").strip()
-        if not token:
-            continue
-        token_cmp = _normalize_compact(token)
-        if not token_cmp:
-            continue
-        if token_cmp in norm_text_cmp:
-            return rule.nombre_pdf, f"contenido_pdf:{token}"
+        for pattern in _split_patterns(rule.regla_lee_documento):
+            pattern_cmp = _normalize_compact(pattern)
+            if pattern_cmp and pattern_cmp in norm_text_cmp:
+                return rule.nombre_pdf, f"ORACLE_CONTENIDO:{pattern}"
 
     # PRIORIDAD 2: similitud difusa del nombre
     best_score = -1.0
     best_rule: Optional[OraclePdfRule] = None
+    best_pattern: Optional[str] = None
 
     for rule in rules:
-        token = (rule.regla_similaridad or "").strip()
-        if not token:
-            continue
-        score = _calcular_similitud(original_filename, token)
-        if score > best_score:
-            best_score = score
-            best_rule = rule
+        for pattern in _split_patterns(rule.regla_similaridad):
+            score = _calculate_similarity(original_filename, pattern)
+            if score > best_score:
+                best_score = score
+                best_rule = rule
+                best_pattern = pattern
 
     if best_rule is not None and best_score >= SIMILARITY_THRESHOLD:
         return (
             best_rule.nombre_pdf,
-            f"similitud:{best_rule.regla_similaridad}|score={best_score:.4f}|umbral={SIMILARITY_THRESHOLD:.4f}",
+            f"ORACLE_NOMBRE:{best_pattern}|score={best_score:.4f}|umbral={SIMILARITY_THRESHOLD:.4f}",
         )
 
-    return None, f"sin_coincidencia|max_score={best_score:.4f}"
+    return None, f"SIN_COINCIDENCIA|max_score={best_score:.4f}"
