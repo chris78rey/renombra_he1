@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QDialog,
     QFormLayout,
     QHBoxLayout,
@@ -13,7 +14,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from app.services.oracle_client import set_oracle_session, test_oracle_login
+from app.services.oracle_client import (
+    save_remembered_credentials,
+    set_oracle_session,
+    test_oracle_login,
+)
 
 
 class OracleLoginDialog(QDialog):
@@ -24,7 +29,7 @@ class OracleLoginDialog(QDialog):
 
         self.setWindowTitle("Inicio de sesión Oracle")
         self.setModal(True)
-        self.resize(520, 260)
+        self.resize(540, 290)
 
         self._build_ui()
 
@@ -35,7 +40,9 @@ class OracleLoginDialog(QDialog):
 
         title = QLabel("Conexión a Oracle")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet("font-size: 22px; font-weight: 800; color: #0f172a;")
+        title.setStyleSheet(
+            "QLabel { font-size: 22px; font-weight: 800; color: #0f172a; }"
+        )
         root.addWidget(title)
 
         subtitle = QLabel(
@@ -43,7 +50,7 @@ class OracleLoginDialog(QDialog):
         )
         subtitle.setWordWrap(True)
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        subtitle.setStyleSheet("font-size: 13px; color: #475569;")
+        subtitle.setStyleSheet("QLabel { font-size: 13px; color: #475569; }")
         root.addWidget(subtitle)
 
         card = QWidget()
@@ -63,14 +70,20 @@ class OracleLoginDialog(QDialog):
         self.txt_password.setEchoMode(QLineEdit.EchoMode.Password)
         self.txt_password.setMinimumHeight(36)
 
+        self.chk_remember = QCheckBox("Recordar en este equipo")
+        self.chk_remember.setChecked(True)
+
         form.addRow("Usuario:", self.txt_user)
         form.addRow("Clave:", self.txt_password)
+        form.addRow("", self.chk_remember)
 
         root.addWidget(card)
 
         self.lbl_status = QLabel("")
         self.lbl_status.setWordWrap(True)
-        self.lbl_status.setStyleSheet("color: #334155; font-size: 12px;")
+        self.lbl_status.setStyleSheet(
+            "QLabel { color: #334155; font-size: 12px; }"
+        )
         root.addWidget(self.lbl_status)
 
         buttons = QHBoxLayout()
@@ -98,12 +111,16 @@ class OracleLoginDialog(QDialog):
         password = self.txt_password.text()
 
         if not user:
-            QMessageBox.warning(self, "Validación", "Se requiere el usuario Oracle.")
+            QMessageBox.warning(
+                self, "Validación", "Se requiere el usuario Oracle."
+            )
             self.txt_user.setFocus()
             return
 
         if not password:
-            QMessageBox.warning(self, "Validación", "Se requiere la clave Oracle.")
+            QMessageBox.warning(
+                self, "Validación", "Se requiere la clave Oracle."
+            )
             self.txt_password.setFocus()
             return
 
@@ -117,6 +134,10 @@ class OracleLoginDialog(QDialog):
 
         if result.get("status") == "OK":
             set_oracle_session(user=user, password=password)
+
+            if self.chk_remember.isChecked():
+                save_remembered_credentials(user=user, password=password)
+
             self.lbl_status.setText(
                 f"Conectado como {result.get('user')} en {result.get('target')}"
             )

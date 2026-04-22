@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+import base64
 import os
-os.environ.setdefault("JAVA_TOOL_OPTIONS", "-Doracle.jdbc.timezoneAsRegion=false -Duser.timezone=UTC")
+
+os.environ.setdefault(
+    "JAVA_TOOL_OPTIONS",
+    "-Doracle.jdbc.timezoneAsRegion=false -Duser.timezone=UTC",
+)
 
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import jaydebeapi
+from PyQt6.QtCore import QSettings
 
 
 # ============================================================
@@ -22,13 +28,15 @@ ORACLE_JDBC_JAR = os.environ.get(
     "ORACLE_JDBC_JAR", str(BASE_DIR / "jdbc" / "ojdbc8.jar")
 )
 
-# Credenciales por defecto opcionales (fallback si no hay sesión activa).
+APP_ORG = "Hospital"
+APP_NAME = "RenombradorPDFHospitalario"
+
 DEFAULT_ORACLE_USER = os.environ.get("ORACLE_USER", "")
 DEFAULT_ORACLE_PASSWORD = os.environ.get("ORACLE_PASSWORD", "")
 
 
 # ============================================================
-# SESION ORACLE EN MEMORIA
+# SESION EN MEMORIA
 # ============================================================
 @dataclass
 class OracleSession:
@@ -62,6 +70,65 @@ def has_oracle_session() -> bool:
 
 
 # ============================================================
+# PERSISTENCIA LOCAL DE CREENCIALES (QSettings + Base64)
+# ============================================================
+def _settings() -> QSettings:
+    return QSettings(APP_ORG, APP_NAME)
+
+
+def _b64_encode(value: str) -> str:
+    return base64.b64encode(value.encode("utf-8")).decode("ascii")
+
+
+def _b64_decode(value: str) -> str:
+    return base64.b64decode(value.encode("ascii")).decode("utf-8")
+
+
+def save_remembered_credentials(user: str, password: str) -> None:
+    s = _settings()
+    s.setValue("oracle/remember_enabled", True)
+    s.setValue("oracle/user", user.strip())
+    s.setValue("oracle/password_b64", _b64_encode(password))
+    s.sync()
+
+
+def load_remembered_credentials() -> Optional[OracleSession]:
+    s = _settings()
+    remember_enabled = s.value("oracle/remember_enabled", False, type=bool)
+    if not remember_enabled:
+        return None
+
+    user = s.value("oracle/user", "", type=str).strip()
+    password_b64 = s.value("oracle/password_b64", "", type=str).strip()
+
+    if not user or not password_b64:
+        return None
+
+    try:
+        password = _b64_decode(password_b64)
+    except Exception:
+        return None
+
+    return OracleSession(user=user, password=password)
+
+
+def clear_remembered_credentials() -> None:
+    s = _settings()
+    s.remove("oracle/remember_enabled")
+    s.remove("oracle/user")
+    s.remove("oracle/password_b64")
+    s.sync()
+
+
+def restore_session_from_saved_credentials() -> bool:
+    creds = load_remembered_credentials()
+    if not creds:
+        return False
+    set_oracle_session(creds.user, creds.password)
+    return True
+
+
+# ============================================================
 # UTILIDADES
 # ============================================================
 def _parse_target(raw: str) -> Tuple[str, int, str]:
@@ -80,19 +147,23 @@ def list_targets() -> List[Tuple[str, int, str]]:
 
 
 def _resolve_credentials() -> Tuple[str, str]:
-    # 1) sesión digitada por el usuario
+    # 1) sesión activa en memoria
     if has_oracle_session():
         session = get_oracle_session()
         if session:
             return session.user, session.password
 
-    # 2) fallback a variables de entorno / defaults
+    # 2) credenciales guardadas localmente
+    remembered = load_remembered_credentials()
+    if remembered:
+        set_oracle_session(remembered.user, remembered.password)
+        return remembered.user, remembered.password
+
+    # 3) fallback a variables de entorno
     if DEFAULT_ORACLE_USER and DEFAULT_ORACLE_PASSWORD:
         return DEFAULT_ORACLE_USER, DEFAULT_ORACLE_PASSWORD
 
-    raise RuntimeError(
-        "No hay credenciales Oracle disponibles. Se requiere iniciar sesión."
-    )
+    raise RuntimeError("No hay credenciales Oracle disponibles.")
 
 
 # ============================================================
@@ -128,7 +199,7 @@ def connect_with_failover():
 
 
 # ============================================================
-# DIAGNOSTICO / PRUEBA DE LOGIN
+# TEST DE LOGIN
 # ============================================================
 def test_oracle_login(user: str, password: str) -> Dict[str, Any]:
     if not user or not password:

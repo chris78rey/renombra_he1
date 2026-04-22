@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QObject, QThread, pyqtSignal
+from PyQt6.QtCore import QObject, QThread, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -24,12 +24,17 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from app.services.oracle_client import (
+    clear_oracle_session,
+    clear_remembered_credentials,
+)
 from app.services.oracle_rule_service import (
     OraclePdfRule,
     fetch_oracle_pdf_rules,
     resolve_pdf_name_from_rules,
 )
 from app.services.pdf_service import PdfScanner
+from app.ui.oracle_login_dialog import OracleLoginDialog
 
 
 class CreditsDialog(QDialog):
@@ -46,7 +51,7 @@ class CreditsDialog(QDialog):
         organization = credits.get("organization", "")
         description = credits.get(
             "description",
-            "Herramienta para analizar, auditar y renombrar PDFs hospitalarios.",
+            "Herramienta para analizar y renombrar PDFs hospitalarios.",
         )
 
         layout = QVBoxLayout(self)
@@ -170,20 +175,24 @@ class MainWindow(QMainWindow):
     def __init__(self, config: dict):
         super().__init__()
         self.config = config
-        self.folder = ""
+        self.folder = config.get("last_folder") or config.get("default_folder") or ""
         self.results: list = []
         self.worker: RenameWorker | None = None
         self.thread: QThread | None = None
         self.setWindowTitle(config.get("app_name", "Renombrador PDF"))
         self.resize(1400, 800)
+
         self._build_menu()
         self._build_ui()
         self._apply_style()
 
     # ── Menú ────────────────────────────────────────────────
     def _build_menu(self):
-        authors_menu = self.menuBar().addMenu("Autores")
-        authors_menu.addAction("Ver autores").triggered.connect(self.show_credits)
+        help_menu = self.menuBar().addMenu("Ayuda")
+        help_menu.addAction("Autores").triggered.connect(self.show_credits)
+
+        oracle_menu = self.menuBar().addMenu("Oracle")
+        oracle_menu.addAction("Volver a pedir credenciales").triggered.connect(self.relogin_oracle)
 
     # ── UI ─────────────────────────────────────────────────
     def _build_ui(self):
@@ -198,9 +207,7 @@ class MainWindow(QMainWindow):
         title.setStyleSheet("font-size: 22px; font-weight: 700; color: #1a2a33;")
         layout.addWidget(title)
 
-        subtitle = QLabel(
-            "1) Seleccionar carpeta  2) Simular  3) Revisar  4) Aplicar"
-        )
+        subtitle = QLabel("1) Seleccionar carpeta  2) Renombrar PDFs")
         subtitle.setStyleSheet("font-size: 12px; color: #51606b; margin-bottom: 8px;")
         layout.addWidget(subtitle)
 
@@ -210,9 +217,12 @@ class MainWindow(QMainWindow):
         lbl = QLabel("Carpeta con PDFs")
         self.folder_edit = QLineEdit()
         self.folder_edit.setPlaceholderText("Seleccione la carpeta que contiene los PDFs")
+        self.folder_edit.setText(self.folder)
+
         btn_folder = QPushButton("Elegir carpeta")
         btn_folder.setMinimumHeight(44)
         btn_folder.clicked.connect(self.select_folder)
+
         row = QHBoxLayout()
         row.addWidget(self.folder_edit, stretch=1)
         row.addWidget(btn_folder)
@@ -220,17 +230,13 @@ class MainWindow(QMainWindow):
         folder_layout.addLayout(row)
         layout.addWidget(folder_card)
 
-        # Acciones
+        # Acciones — un solo botón
         actions_card = self._card()
         actions_layout = QHBoxLayout(actions_card)
-        self.btn_simulate = QPushButton("1. Simular renombrado")
-        self.btn_simulate.setMinimumHeight(52)
-        self.btn_simulate.clicked.connect(self.run_simulation)
-        self.btn_apply = QPushButton("2. Aplicar renombrado")
-        self.btn_apply.setMinimumHeight(52)
-        self.btn_apply.clicked.connect(self.run_apply)
-        actions_layout.addWidget(self.btn_simulate)
-        actions_layout.addWidget(self.btn_apply)
+        self.btn_rename = QPushButton("Renombrar PDFs")
+        self.btn_rename.setMinimumHeight(56)
+        self.btn_rename.clicked.connect(self.run_rename)
+        actions_layout.addWidget(self.btn_rename)
         layout.addWidget(actions_card)
 
         # Estado
@@ -317,20 +323,28 @@ class MainWindow(QMainWindow):
             self.folder = folder
             self.folder_edit.setText(folder)
 
-    def run_simulation(self):
-        self._run(dry_run=True)
+    def run_rename(self):
+        folder = self.folder_edit.text().strip()
+        if not folder:
+            QMessageBox.warning(self, "Validación", "Se requiere seleccionar la carpeta.")
+            return
 
-    def run_apply(self):
-        confirm = QMessageBox.question(
+        if not Path(folder).exists():
+            QMessageBox.warning(self, "Validación", "La carpeta seleccionada no existe.")
+            return
+
+        answer = QMessageBox.question(
             self,
             "Confirmar renombrado",
             "Se van a renombrar físicamente los archivos.\n\n¿Desea continuar?",
         )
-        if confirm != QMessageBox.StandardButton.Yes:
+        if answer != QMessageBox.StandardButton.Yes:
             return
-        self._run(dry_run=False)
 
-    def _run(self, dry_run: bool):
+        self.folder = folder
+        self._run()
+
+    def _run(self):
         if not self.folder:
             QMessageBox.warning(self, "Falta carpeta", "Seleccione la carpeta primero")
             return
@@ -338,17 +352,10 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "En curso", "Ya hay un proceso ejecutándose")
             return
 
-        self.btn_simulate.setEnabled(False)
-        self.btn_apply.setEnabled(False)
-        self._current_dry_run = dry_run
-        self.status_label.setText(
-            "Procesando..." if dry_run else "Renombrando..."
-        )
+        self.btn_rename.setEnabled(False)
+        self.status_label.setText("Procesando renombrado...")
         self._log("-" * 50)
-        self._log(
-            f"Inicio: {'simulación' if dry_run else 'aplicación'}"
-            f" en {self.folder}"
-        )
+        self._log(f"Inicio en {self.folder}")
 
         self.thread = QThread(self)
         self.worker = RenameWorker(self.config, self.folder)
@@ -363,18 +370,23 @@ class MainWindow(QMainWindow):
 
     def _on_finished(self, results: list):
         self.results = results
-        if not self._current_dry_run:
-            self._apply_renames_with_dedup(results)
-        else:
-            self._populate_table()
-            self._log(f"Simulación completada: {len(results)} archivos")
+        self.btn_rename.setEnabled(True)
+        self.status_label.setText("Renombrado terminado.")
+        self._apply_renames_with_dedup(results)
+        self._populate_table()
+        self._log(f"Total archivos evaluados: {len(results)}")
+
+        renamed = sum(
+            1 for r in results
+            if r.get("suggested_final_name") and r["original_name"] != r["suggested_final_name"]
+        )
         ok = sum(
             1 for r in results
             if any(x in r["status"] for x in ["EXACTO", "ORACLE"])
         )
-        self.status_label.setText(f"{len(results)} archivos evaluados, {ok} con coincidencia")
-        self.btn_simulate.setEnabled(True)
-        self.btn_apply.setEnabled(True)
+        self.status_label.setText(
+            f"{len(results)} evaluados, {renamed} renombrados, {ok} con coincidencia Oracle"
+        )
         self.thread = None
         self.worker = None
 
@@ -382,8 +394,7 @@ class MainWindow(QMainWindow):
         self.status_label.setText("Error")
         self._log(f"ERROR: {msg}")
         QMessageBox.critical(self, "Error", msg)
-        self.btn_simulate.setEnabled(True)
-        self.btn_apply.setEnabled(True)
+        self.btn_rename.setEnabled(True)
         self.thread = None
         self.worker = None
 
@@ -442,6 +453,20 @@ class MainWindow(QMainWindow):
             self.table.setItem(row, 2, QTableWidgetItem(item["target_path"]))
             self.table.setItem(row, 3, QTableWidgetItem(item["reason"]))
         self.table.resizeRowsToContents()
+
+    def relogin_oracle(self):
+        clear_oracle_session()
+        clear_remembered_credentials()
+
+        dlg = OracleLoginDialog(config=self.config, parent=self)
+        if dlg.exec() == OracleLoginDialog.DialogCode.Accepted:
+            QMessageBox.information(
+                self, "Oracle", "Credenciales actualizadas correctamente."
+            )
+        else:
+            QMessageBox.warning(
+                self, "Oracle", "No se actualizaron las credenciales."
+            )
 
     def show_credits(self):
         dlg = CreditsDialog(self.config, self)
