@@ -19,6 +19,10 @@ ORACLE_JDBC_JAR = os.getenv("ORACLE_JDBC_JAR", "ojdbc8.jar")
 SIMILARITY_THRESHOLD = 0.90
 SIMILARITY_ALGORITHM = "JARO_WINKLER"
 
+# Delimitador para múltiples reglas en una sola columna Oracle
+# Ejemplo: 'PLANILLA|PLANILLA INDIVIDUAL|PLANI'
+RULE_DELIMITER = "|"
+
 try:
     import jaydebeapi
 except ImportError:
@@ -57,6 +61,14 @@ def normalizar_texto(valor: str | None) -> str:
 def normalizar_compacto(valor: str | None) -> str:
     valor = normalizar_texto(valor)
     return re.sub(r"[^A-Z0-9]+", "", valor)
+
+
+
+def partir_reglas_multiples(valor: str | None) -> list[str]:
+    if not valor:
+        return []
+    partes = [x.strip() for x in str(valor).split(RULE_DELIMITER)]
+    return [x for x in partes if x]
 
 
 def limpiar_ruido_nombre_archivo(nombre: str) -> str:
@@ -252,31 +264,30 @@ def extraer_texto_pdf(path_pdf: str) -> str:
 def resolver_por_oracle_contenido(texto_pdf: str, reglas: list[ReglaOracle]):
     texto_compacto = normalizar_compacto(texto_pdf)
     for regla in reglas:
-        patron = (regla.regla_lee_documento or "").strip()
-        if not patron:
-            continue
-        patron_cmp = normalizar_compacto(patron)
-        if patron_cmp and patron_cmp in texto_compacto:
-            return regla.nombre_pdf, f"ORACLE_CONTENIDO:{patron}"
+        patrones = partir_reglas_multiples(regla.regla_lee_documento)
+        for patron in patrones:
+            patron_cmp = normalizar_compacto(patron)
+            if patron_cmp and patron_cmp in texto_compacto:
+                return regla.nombre_pdf, f"ORACLE_CONTENIDO:{patron}"
     return None, "ORACLE_CONTENIDO_SIN_MATCH"
 
 
 def resolver_por_oracle_nombre(nombre_archivo: str, reglas: list[ReglaOracle]):
     mejor_score = -1.0
     mejor_regla = None
+    mejor_patron = None
     for regla in reglas:
-        patron = (regla.regla_similaridad or "").strip()
-        if not patron:
-            continue
-        score = calcular_similitud(nombre_archivo, patron)
-        if score > mejor_score:
-            mejor_score = score
-            mejor_regla = regla
+        patrones = partir_reglas_multiples(regla.regla_similaridad)
+        for patron in patrones:
+            score = calcular_similitud(nombre_archivo, patron)
+            if score > mejor_score:
+                mejor_score = score
+                mejor_regla = regla
+                mejor_patron = patron
     if mejor_regla is not None and mejor_score >= SIMILARITY_THRESHOLD:
         return (
             mejor_regla.nombre_pdf,
-            f"ORACLE_NOMBRE:{mejor_regla.regla_similaridad}|"
-            f"score={mejor_score:.4f}|umbral={SIMILARITY_THRESHOLD:.4f}",
+            f"ORACLE_NOMBRE:{mejor_patron}|score={mejor_score:.4f}|umbral={SIMILARITY_THRESHOLD:.4f}",
         )
     return None, f"ORACLE_NOMBRE_SIN_MATCH|max_score={mejor_score:.4f}"
 
@@ -334,7 +345,8 @@ def renombrar_pdfs(base_dir: str, dry_run: bool = True):
     print(f"Algoritmo similitud: {SIMILARITY_ALGORITHM}")
     print(f"Umbral similitud: {SIMILARITY_THRESHOLD}")
     print(f"Modo simulación: {'SI' if dry_run else 'NO'}")
-    print(f"Oracle disponible: {'SI' if oracle_disponible else 'NO'}\n")
+    print(f"Oracle disponible: {'SI' if oracle_disponible else 'NO'}")
+    print(f"Delimitador reglas múltiples: {RULE_DELIMITER}\n")
 
     total = 0
     simulados = 0
