@@ -33,6 +33,7 @@ from app.services.oracle_rule_service import (
     fetch_oracle_pdf_rules,
     resolve_pdf_name_from_rules,
 )
+from app.services.folder_flatten_service import flatten_request_result_folders
 from app.services.pdf_service import PdfScanner
 from app.ui.oracle_login_dialog import OracleLoginDialog
 
@@ -141,10 +142,24 @@ class RenameWorker(QObject):
 
     def run(self):
         try:
+            self.progress.emit("Aplanando carpetas de solicitudes/resultados...")
+            flatten_result = flatten_request_result_folders(self.folder)
+
+            if flatten_result.moved:
+                self.progress.emit(
+                    f"Se movieron {flatten_result.moved} PDF(s) desde subcarpetas."
+                )
+            if flatten_result.errors:
+                self.progress.emit(
+                    f"Aplanado con advertencias: {len(flatten_result.errors)} error(es)."
+                )
+
             self.progress.emit("Escaneando PDFs...")
             scanner = PdfScanner(self.config)
             candidates = scanner.scan_folder(self.folder)
-            self.progress.emit(f"Evaluando {len(candidates)} archivo(s) con reglas Oracle...")
+            self.progress.emit(
+                f"Evaluando {len(candidates)} archivo(s) con reglas Oracle..."
+            )
             rules = fetch_oracle_pdf_rules()
             results = []
             for candidate in candidates:
@@ -156,7 +171,6 @@ class RenameWorker(QObject):
                 results.append({
                     "original_name": candidate.original_name,
                     "original_path": str(candidate.original_path),
-                    # Respetar EXACTAMENTE el case entregado por Oracle
                     "suggested_final_name": (target or "").strip(),
                     "target_path": (
                         str(candidate.original_path.parent / (target or "").strip())
@@ -166,6 +180,42 @@ class RenameWorker(QObject):
                     "status": reason,
                     "reason": reason,
                 })
+
+            if (
+                flatten_result.moved
+                or flatten_result.removed_dirs
+                or flatten_result.skipped_dirs
+            ):
+                results.insert(
+                    0,
+                    {
+                        "original_name": "[APLANADO DE CARPETAS]",
+                        "original_path": self.folder,
+                        "suggested_final_name": "",
+                        "target_path": "",
+                        "status": "INFO",
+                        "reason": (
+                            f"PDFs movidos: {flatten_result.moved} | "
+                            f"Carpetas eliminadas: {flatten_result.removed_dirs} | "
+                            f"Carpetas no eliminadas por no estar vacias: "
+                            f"{flatten_result.skipped_dirs}"
+                        ),
+                    },
+                )
+
+            for err in flatten_result.errors:
+                results.insert(
+                    0,
+                    {
+                        "original_name": "[ERROR APLANADO]",
+                        "original_path": self.folder,
+                        "suggested_final_name": "",
+                        "target_path": "",
+                        "status": "ERROR",
+                        "reason": err,
+                    },
+                )
+
             self.finished.emit(results)
         except Exception as exc:
             self.failed.emit(str(exc))
