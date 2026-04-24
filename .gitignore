@@ -21,3 +21,8 @@ repomix-output.xml
 # OS
 .DS_Store
 Thumbs.db
+
+# Installer build leftovers
+installer/_internal/
+installer/RenombradorPDFHospitalario.exe
+installer/HE1_Portable.zip
