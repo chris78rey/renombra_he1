@@ -26,3 +26,5 @@ Thumbs.db
 installer/_internal/
 installer/RenombradorPDFHospitalario.exe
 installer/HE1_Portable.zip
+installer/HE1_Movable.exe
+installer/HE1_Setup.exe
